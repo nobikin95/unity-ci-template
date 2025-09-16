@@ -14,11 +14,52 @@ public class BuildScript
 	public static void BuildAPK()
 	{
 		// Set keystore path from the root directory of the Git project
-		// TODO : Replace the values with your own keystore file and passwords
-		string keystorePath = "user.keystore";
-		string keystorePass = "zegostudio"; // Password for the keystore	
-		string keyAlias = "zego"; // Alias for the key
-		string keyPass = "zegostudio"; // Password for the key
+		// Get keystore information from environment variables (GitLab CI/CD variables) - REQUIRED
+		string keystorePath = System.Environment.GetEnvironmentVariable("KEYSTORE_PATH");
+		string keystorePass = System.Environment.GetEnvironmentVariable("KEYSTORE_PASS");
+		string keyAlias = System.Environment.GetEnvironmentVariable("KEY_ALIAS");
+		string keyPass = System.Environment.GetEnvironmentVariable("KEY_PASS");
+
+		// Validate required keystore configuration
+		if (string.IsNullOrEmpty(keystorePath))
+		{
+			Debug.LogError("[Build] KEYSTORE_PATH environment variable is not set. Please configure keystore settings in GitLab CI/CD variables.");
+			EditorApplication.Exit(1);
+			return;
+		}
+		if (string.IsNullOrEmpty(keystorePass))
+		{
+			Debug.LogError("[Build] KEYSTORE_PASS environment variable is not set. Please configure keystore settings in GitLab CI/CD variables.");
+			EditorApplication.Exit(1);
+			return;
+		}
+		if (string.IsNullOrEmpty(keyAlias))
+		{
+			Debug.LogError("[Build] KEY_ALIAS environment variable is not set. Please configure keystore settings in GitLab CI/CD variables.");
+			EditorApplication.Exit(1);
+			return;
+		}
+		if (string.IsNullOrEmpty(keyPass))
+		{
+			Debug.LogError("[Build] KEY_PASS environment variable is not set. Please configure keystore settings in GitLab CI/CD variables.");
+			EditorApplication.Exit(1);
+			return;
+		}
+
+		// Normalize path for cross-platform compatibility (Windows \ to Unix /)
+		keystorePath = keystorePath.Replace("\\", "/");
+
+		// If path starts with \ or /, treat as relative to project root
+		if (keystorePath.StartsWith("/") || keystorePath.StartsWith("\\"))
+		{
+			keystorePath = keystorePath.TrimStart('/', '\\');
+		}
+
+		// Convert to absolute path if it's relative
+		if (!Path.IsPathRooted(keystorePath))
+		{
+			keystorePath = Path.Combine(Directory.GetCurrentDirectory(), keystorePath);
+		}
 									   // Default path for the APK
 		string buildPath = "Build/Android/your_game.apk";
 
@@ -71,11 +112,52 @@ public class BuildScript
 	{
 
 		// Set keystore path from the root directory of the Git project
-		// TODO : Replace the values with your own keystore file and passwords
-		string keystorePath = "user.keystore";
-		string keystorePass = "zegostudio";
-		string keyAlias = "zego";
-		string keyPass = "zegostudio";
+		// Get keystore information from environment variables (GitLab CI/CD variables) - REQUIRED
+		string keystorePath = System.Environment.GetEnvironmentVariable("KEYSTORE_PATH");
+		string keystorePass = System.Environment.GetEnvironmentVariable("KEYSTORE_PASS");
+		string keyAlias = System.Environment.GetEnvironmentVariable("KEY_ALIAS");
+		string keyPass = System.Environment.GetEnvironmentVariable("KEY_PASS");
+
+		// Validate required keystore configuration
+		if (string.IsNullOrEmpty(keystorePath))
+		{
+			Debug.LogError("[Build] KEYSTORE_PATH environment variable is not set. Please configure keystore settings in GitLab CI/CD variables.");
+			EditorApplication.Exit(1);
+			return;
+		}
+		if (string.IsNullOrEmpty(keystorePass))
+		{
+			Debug.LogError("[Build] KEYSTORE_PASS environment variable is not set. Please configure keystore settings in GitLab CI/CD variables.");
+			EditorApplication.Exit(1);
+			return;
+		}
+		if (string.IsNullOrEmpty(keyAlias))
+		{
+			Debug.LogError("[Build] KEY_ALIAS environment variable is not set. Please configure keystore settings in GitLab CI/CD variables.");
+			EditorApplication.Exit(1);
+			return;
+		}
+		if (string.IsNullOrEmpty(keyPass))
+		{
+			Debug.LogError("[Build] KEY_PASS environment variable is not set. Please configure keystore settings in GitLab CI/CD variables.");
+			EditorApplication.Exit(1);
+			return;
+		}
+
+		// Normalize path for cross-platform compatibility (Windows \ to Unix /)
+		keystorePath = keystorePath.Replace("\\", "/");
+
+		// If path starts with \ or /, treat as relative to project root
+		if (keystorePath.StartsWith("/") || keystorePath.StartsWith("\\"))
+		{
+			keystorePath = keystorePath.TrimStart('/', '\\');
+		}
+
+		// Convert to absolute path if it's relative
+		if (!Path.IsPathRooted(keystorePath))
+		{
+			keystorePath = Path.Combine(Directory.GetCurrentDirectory(), keystorePath);
+		}
 		// Default path for the AAB
 		string buildPath = "Build/Android/your_game.aab";
 		string symbolsPath = "Build/Android/Symbols"; // Directory containing symbol files

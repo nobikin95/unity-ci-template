@@ -5,6 +5,15 @@ variables:
   HASH_FILE: ".important_files_hash"
   GIT_CLEAN_FLAGS: -ffdx -e Library/ -e Temp/
   REDIS_URL: "redis://localhost:6379/0"
+  # Keystore configuration - MUST be set as protected variables in GitLab CI/CD settings
+  # KEYSTORE_PATH examples:
+  #   - "user.keystore" (file in project root)
+  #   - "Keystore/color_lab.keystore" (file in Keystore folder)
+  #   - "/coloring.keystore" or "\coloring.keystore" (will be treated as relative to project root)
+  # KEYSTORE_PATH: ""  # Relative path to keystore file (supports both / and \ separators) - REQUIRED
+  # KEYSTORE_PASS: ""  # Keystore password - REQUIRED
+  # KEY_ALIAS: ""      # Key alias - REQUIRED
+  # KEY_PASS: ""       # Key password - REQUIRED
 
 .common_before_script: &common_before_script
   - git config --global url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
@@ -36,6 +45,26 @@ variables:
   - if [ -z "$SLACK_CHANNEL_ID" ]; then echo "SLACK_CHANNEL_ID is not set"; else echo $SLACK_CHANNEL_ID; fi
   - if [ -z "$GITLAB_API_TOKEN" ]; then echo "GITLAB_API_TOKEN is not set"; else echo $GITLAB_API_TOKEN; fi
   - if [ -z "$SLACK_USER_IDS" ]; then echo "SLACK_USER_IDS is not set"; else echo $SLACK_USER_IDS; fi
+
+  # Validate required keystore configuration
+  - echo "Checking keystore configuration..."
+  - if [ -z "$KEYSTORE_PATH" ]; then
+      echo "❌ ERROR KEYSTORE_PATH is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      exit 1;
+    fi
+  - if [ -z "$KEYSTORE_PASS" ]; then
+      echo "❌ ERROR KEYSTORE_PASS is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      exit 1;
+    fi
+  - if [ -z "$KEY_ALIAS" ]; then
+      echo "❌ ERROR KEY_ALIAS is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      exit 1;
+    fi
+  - if [ -z "$KEY_PASS" ]; then
+      echo "❌ ERROR KEY_PASS is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      exit 1;
+    fi
+  - echo "✅ Keystore configuration validated successfully"
 
   # Extract the current MAJOR, MINOR, PATCH versions
   - export CURRENT_VERSION=$APK_VERSION
