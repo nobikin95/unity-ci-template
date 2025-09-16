@@ -1,0 +1,25 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Upload .ipa to TestFlight"
+  lane :upload_testflight do
+    # Decode API Key from GitLab CI/CD Variables
+    auth_key_path = "ci/deploy/AuthKey.p8"
+    File.open(auth_key_path, "w") { |file| file.write(Base64.decode64(ENV["APP_STORE_KEY_BASE64"])) }
+    File.chmod(0600, auth_key_path) 
+
+    #IPA Path
+    ipa_path = "Build/iOS/ExportedIPA/YourAppName.ipa"
+
+    # Upload to TestFlight
+    upload_to_testflight(
+      api_key: {
+        key_id: ENV["APP_STORE_KEY_ID"],
+        issuer_id: ENV["APP_STORE_ISSUER_ID"],
+        key_filepath: auth_key_path
+      },
+      ipa: ipa_path,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end

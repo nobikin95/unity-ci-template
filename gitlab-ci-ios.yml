@@ -1,0 +1,622 @@
+variables:
+  IOS_DEVELOPMENT_TEAM: "RN7J7SQGUH"
+  XCODE_DERIVED_DATA_PATH: "$CI_PROJECT_DIR/DerivedData"
+
+.common_before_script: &common_before_script
+  - git clean -fdx
+  - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
+  - git submodule sync
+  - git submodule update --init --recursive --checkout
+  - git submodule foreach 'git reset --hard'
+  - git submodule foreach 'git clean -fdx'
+  
+  # Setup iOS automatic signing - Simplified version
+  - |
+    echo "🤖 Setting up iOS Automatic Signing..."
+    echo "======================================"
+
+    # Verify required environment variables
+    if [ -z "$IOS_DEVELOPMENT_TEAM" ]; then
+      echo "❌ Error: IOS_DEVELOPMENT_TEAM not set"
+      exit 1
+    fi
+
+    echo "✅ Team ID: $IOS_DEVELOPMENT_TEAM"
+    echo "✅ Bundle ID: com.dino.weapon.backpack"
+    echo "✅ Signing Style: Automatic"
+    echo "✅ Export Method: Ad-Hoc"
+    echo "✅ Using Xcode automatic signing capabilities"
+
+    # Check available certificates for automatic signing
+    CERT_COUNT=$(security find-identity -v -p codesigning | grep -c "iPhone Distribution\|Apple Distribution" 2>/dev/null || echo "0")
+    if [ "$CERT_COUNT" -gt 0 ]; then
+      echo "✅ Found $CERT_COUNT distribution certificate(s) for automatic signing"
+      security find-identity -v -p codesigning | grep "iPhone Distribution\|Apple Distribution" | head -3
+    else
+      echo "⚠️  No distribution certificates found - automatic signing may fail"
+      echo "Available certificates:"
+      security find-identity -v -p codesigning | head -5 || echo "None found"
+      echo ""
+      echo "💡 To fix this:"
+      echo "   1. Install Distribution Certificate manually on GitLab runner"
+      echo "   2. Or add Apple ID credentials for automatic profile management"
+    fi
+
+    # Add Apple ID credentials check for automatic profile creation
+    if [ -n "$APPLE_ID" ] && [ -n "$APPLE_ID_PASSWORD" ]; then
+      echo "✅ Apple ID credentials available for automatic profile management"
+      echo "   Apple ID: $APPLE_ID"
+    else
+      echo "⚠️  Apple ID credentials not set"
+      echo "   For automatic profile creation, add GitLab variables:"
+      echo "   • APPLE_ID: your-apple-id@example.com"
+      echo "   • APPLE_ID_PASSWORD: your-app-specific-password"
+    fi
+
+    # Force refresh Xcode caches
+    echo ""
+    echo "🔄 Refreshing Xcode Caches..."
+    echo "============================="
+
+    # Kill any running Xcode processes
+    killall -9 Xcode 2>/dev/null || true
+    killall -9 xcodebuild 2>/dev/null || true
+
+    # Clear Xcode derived data
+    rm -rf ~/Library/Developer/Xcode/DerivedData/* 2>/dev/null || true
+
+    # Shutdown simulators
+    xcrun simctl shutdown all 2>/dev/null || true
+
+    echo "✅ Xcode caches refreshed"
+
+    # Pre-export validation
+    echo ""
+    echo "🔍 Pre-Export Validation:"
+    echo "========================="
+
+    AVAILABLE_CERTS=$(security find-identity -v -p codesigning | grep -c "iPhone Distribution\|Apple Distribution" 2>/dev/null || echo "0")
+    echo "• Distribution Certificates: $AVAILABLE_CERTS"
+
+    if [ "$AVAILABLE_CERTS" -gt 0 ]; then
+        echo "✅ Prerequisites met for automatic signing export"
+    else
+        echo "⚠️  Missing prerequisites - export may fail"
+    fi
+
+    echo ""
+    echo "🎯 Automatic signing setup completed"
+    echo ""
+    echo "📋 Final Configuration Summary:"
+    echo "=============================="
+    echo "• Export Method: release-testing (Ad-Hoc)"
+    echo "• Signing Style: automatic"
+    echo "• Team ID: $IOS_DEVELOPMENT_TEAM"
+    echo "• Bundle ID: com.dino.weapon.backpack"
+    echo "• Distribution Certificates: $AVAILABLE_CERTS available"
+    echo "• Expected: Xcode will use automatic signing with available certificates"
+
+  - echo "Setting up environment for iOS build..."
+  - export PROJECT_UNITY_VERSION=$(grep "m_EditorVersion:" ProjectSettings/ProjectVersion.txt | awk '{print $2}')
+  - echo "Unity version from ProjectSettings ${PROJECT_UNITY_VERSION}"
+  - if [ -d "/Applications/Unity/Hub/Editor" ]; then export UNITY_INSTALLED_VERSIONS=$(ls /Applications/Unity/Hub/Editor); fi
+  - echo "Available Unity versions... ${UNITY_INSTALLED_VERSIONS}"
+  - export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | grep -E "^${PROJECT_UNITY_VERSION}" | head -n 1)
+  - | # Use block scalar for multi-line if
+    if [ -z "$UNITY_VERSION" ]; then
+      echo "Exact version not found. Selecting closest version available...";
+      export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | sort -V | grep "^${PROJECT_UNITY_VERSION%.*}" | tail -n 1);
+    fi
+  - export UNITY_PATH="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app/Contents/MacOS/Unity"
+  - echo "Using Unity version ${UNITY_VERSION}"
+  - | # Use block scalar for multi-line if with error handling
+    if [ ! -f "$UNITY_PATH" ]; then
+      echo "Error... Unity executable not found at $UNITY_PATH";
+      python3 ./ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+      python3 ./ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+      exit 1;
+    fi
+  - export CURRENT_VERSION=$IOS_VERSION
+  - export MAJOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f1)
+  - export MINOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f2)
+  - export PATCH_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f3)
+  - sed -i '' "s/\(bundleVersion:\).*/\1 \"$CURRENT_VERSION\"/" ProjectSettings/ProjectSettings.asset
+  - sed -i '' "s/\(m_ShowUnitySplashLogo:\).*/\1 0/" ProjectSettings/ProjectSettings.asset
+  - echo "Updated bundleVersion in ProjectSettings.asset to $CURRENT_VERSION"
+  - grep "bundleVersion:" ProjectSettings/ProjectSettings.asset
+  - echo "Updated m_ShowUnitySplashLogo in ProjectSettings.asset to 0"
+  - grep "m_ShowUnitySplashLogo:" ProjectSettings/ProjectSettings.asset
+
+.common_build_steps: &common_build_steps
+  # Update Scripting Symbol
+  - chmod +x ./ci/update_scripting_symbols.sh
+  - ./ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
+  - echo "Starting iOS .ipa build..."
+  - mkdir -p Build/iOS
+  - python3 ./ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+  - python3 ./ci/send_slack_direct_message.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" notify_user="$NOTIFY_DEV" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+  - |
+    # Function to perform Unity build with framework verification retry
+    perform_unity_build_with_retry() {
+      local max_retries=10
+      local retry_count=0
+      
+      while [ $retry_count -lt $max_retries ]; do
+        echo "🔄 Unity build attempt $((retry_count + 1))/$max_retries"
+        
+        # Clean previous build
+        if [ $retry_count -gt 0 ]; then
+          echo "🧹 Cleaning previous build..."
+          rm -rf Build/iOS
+        fi
+        
+        # Unity build
+        echo "Running Unity build command with UNITY_PATH=$UNITY_PATH"
+        $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget iOS -executeMethod BuildScript.BuildiOS -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
+          echo "Unity build failed. Output log:";
+          tail -n 50 $CI_PROJECT_DIR/build_output.log;
+          python3 ./ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+          python3 ./ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+          exit 1;
+        }
+        
+        echo "Unity build completed. Checking Build/iOS directory contents:"
+        ls -l Build/iOS/
+        
+        # Check if Xcode project exists
+        if [ ! -d "Build/iOS/Unity-iPhone.xcodeproj" ]; then
+          echo "Error... Xcode project not found in Build/iOS directory after Unity build.";
+          python3 ./ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+          python3 ./ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+          exit 1;
+        fi
+        
+        echo "Validating Xcode project file..."
+        plutil -lint Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj || {
+          echo "The Xcode project file has syntax errors.";
+          python3 ./ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+          python3 ./ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+          exit 1;
+        }
+        
+        echo "⚡ Running Xcode Framework Verification..."
+        chmod +x ci/verify_frameworks.sh
+        
+        # Chạy verify_frameworks.sh với error handling
+        echo ""
+        echo "🔍 Starting framework verification..."
+        if ./ci/verify_frameworks.sh; then
+          echo ""
+          echo "✅ Framework verification passed!"
+          echo "🎉 All required frameworks are present and correctly configured!"
+          echo ""
+          break
+        else
+          verify_exit_code=$?
+          echo ""
+          echo "❌ Framework verification failed with exit code $verify_exit_code"
+          echo ""
+          
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            echo "🔄 Retrying Unity build..."
+            echo "📋 Missing frameworks detected. Will retry build..."
+            echo "🔧 BuildScript.cs should automatically add all required frameworks"
+            echo "⏳ Waiting 10 seconds before retry..."
+            sleep 10
+          else
+            echo ""
+            echo "❌ Framework verification failed after $max_retries attempts."
+            echo "📋 Final missing frameworks:"
+            echo ""
+            ./ci/verify_frameworks.sh || echo "Framework verification script failed"
+            echo ""
+            echo "💡 This might indicate an issue with the BuildScript.cs post-processing"
+            echo "⚠️ Continuing with build despite framework verification issues..."
+            echo ""
+            break
+          fi
+        fi
+      done
+    }
+    
+    # Execute the build function
+    perform_unity_build_with_retry
+  - echo "Done..."
+  
+  # Thêm validation sau khi verify_frameworks.sh
+  - echo "Validating Xcode project after framework verification..."
+  - | # Use block scalar for command with || error handling
+    plutil -lint Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj || {
+      echo "Xcode project file has syntax errors after framework verification.";
+      echo "Attempting to restore from backup or rebuild...";
+      # Nếu có backup, restore lại
+      if [ -f "Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj.backup" ]; then
+        cp "Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj.backup" "Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj";
+        echo "Restored project.pbxproj from backup.";
+      else
+        echo "No backup found. Project file may be corrupted.";
+        python3 ./ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+        python3 ./ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+        exit 1;
+      fi
+    }
+  - echo "Xcode project validation passed after framework verification."
+
+.common_update_version: &common_update_version
+  - echo "Updating IOS_VERSION in GitLab CI/CD Variables..."
+  - export PATCH_VERSION=$((PATCH_VERSION + 1))
+  - | # Use block scalar for multi-line if
+    if [ "$PATCH_VERSION" -gt 99 ]; then
+      export PATCH_VERSION=0;
+      export MINOR_VERSION=$((MINOR_VERSION + 1));
+    fi
+  - | # Use block scalar for multi-line if
+    if [ "$MINOR_VERSION" -gt 99 ]; then
+      export MINOR_VERSION=0;
+      export MAJOR_VERSION=$((MAJOR_VERSION + 1));
+    fi
+  - export NEW_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
+  - echo "Next IOS_VERSION will be $NEW_VERSION"
+  - 'curl --fail -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/IOS_VERSION"'
+
+.handle_xcode_error_script_content: &handle_xcode_error_script_content
+  error_message="$1" 
+  log_file="$2" 
+  echo "-----------------------------------------------------"
+  echo "[ERROR] $error_message"
+  if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+    echo "Last 50 lines of $log_file:"
+    tail -n 50 "$log_file"
+  fi
+  echo "-----------------------------------------------------"
+  python3 "$CI_PROJECT_DIR/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+  if [ -n "$NOTIFY_DEV" ]; then
+    python3 "$CI_PROJECT_DIR/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+  fi
+  exit 1
+
+build_ios_release:
+  stage: build_ios
+  before_script:
+    - export BUILD_TYPE="✈️Testflight"
+    - *common_before_script
+    # Define the shell function directly here using the content alias
+    - |
+      handle_xcode_error() {
+        error_message="$1" # First argument is the error message
+        log_file="$2"      # Second argument is the log file (optional)
+        echo "-----------------------------------------------------"
+        echo "[ERROR] $error_message"
+        if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+          echo "Last 50 lines of $log_file:"
+          tail -n 50 "$log_file"
+        fi
+        echo "-----------------------------------------------------"
+        python3 "$CI_PROJECT_DIR/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+        if [ -n "$NOTIFY_DEV" ]; then
+          python3 "$CI_PROJECT_DIR/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+        fi
+        exit 1
+      }
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+      - script_failure
+  tags:
+    - macos
+  timeout: 60m
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^ios-release\/bundle.*$/'
+      when: on_success
+  script:
+    - *common_build_steps
+    - echo "Loading Slack message template..."
+    - export MESSAGE_TEMPLATES_FILE="$CI_PROJECT_DIR/ci/message_templates.json"
+    - | # Use block scalar for multi-line script
+      template_key="build_start"
+      if [ ! -f "$MESSAGE_TEMPLATES_FILE" ]; then
+        echo "[ERROR] Message template file not found: $MESSAGE_TEMPLATES_FILE"
+        exit 1
+      fi
+      message=$(jq -r --arg key "$template_key" '.[$key]' "$MESSAGE_TEMPLATES_FILE")
+
+      if [ -z "$message" ] || [ "$message" == "null" ]; then
+        echo "[ERROR] Message template not found for key: $template_key in $MESSAGE_TEMPLATES_FILE"
+        exit 1
+      fi
+
+      start_build_message=$(printf "$message" | sed \
+        -e "s/{project_name}/${PROJECT_NAME}/g" \
+        -e "s/{platform}/🍏iOS/g" \
+        -e "s/{build_type}/${BUILD_TYPE}/g" \
+        -e "s/{version}/${CURRENT_VERSION}/g")
+
+      echo "Formatted Slack message:"
+      echo "$start_build_message"
+    - python3 ./ci/send_slack_message.py "C07UU3A6H0R" "$start_build_message" "$SLACK_BOT_TOKEN"
+
+    # Add step to clean DerivedData before Xcode build
+    - echo "Ensuring clean build environment by removing previous DerivedData..."
+    - rm -rf "$XCODE_DERIVED_DATA_PATH"
+
+    - echo "Building .ipa file using Xcode with automatic signing..."
+    - cd Build/iOS
+    
+    # Check and create workspace if needed
+    - chmod +x "$CI_PROJECT_DIR/ci/create_workspace.sh"
+    - "$CI_PROJECT_DIR/ci/create_workspace.sh"
+    
+    - | # Use block scalar for the entire multi-line if/then/else/fi block
+      if [ -d "Unity-iPhone.xcworkspace" ]; then
+        echo "Found Xcode workspace. Building with xcodebuild...";
+        export ARCHIVE_PATH="$CI_PROJECT_DIR/Build/iOS/${PROJECT_NAME}_${CURRENT_VERSION}.xcarchive"
+        export EXPORT_LOG_PATH="$CI_PROJECT_DIR/export_release.log"
+        export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_release.log"
+
+        echo "Archiving to $ARCHIVE_PATH"
+        xcodebuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -configuration Release \
+          -archivePath "$ARCHIVE_PATH" \
+          -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+          DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
+          -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
+          > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
+        echo "✅ Archive completed successfully"
+
+        echo "Exporting archive with automatic signing..."
+        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
+           handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
+        fi
+        xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
+          -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
+          -allowProvisioningUpdates \
+          -quiet \
+          > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
+        echo "✅ Export completed successfully"
+
+        echo "IPA file exported successfully to ExportedIPA_Release directory.";
+      elif [ -d "Unity-iPhone.xcodeproj" ]; then
+        echo "Found Xcode project. Building with xcodebuild...";
+        export ARCHIVE_PATH="$CI_PROJECT_DIR/Build/iOS/${PROJECT_NAME}_${CURRENT_VERSION}.xcarchive"
+        export EXPORT_LOG_PATH="$CI_PROJECT_DIR/export_release.log"
+        export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_release.log"
+
+        echo "Archiving to $ARCHIVE_PATH"
+        xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
+          -archivePath "$ARCHIVE_PATH" \
+          -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+          DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
+          -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
+          > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
+        echo "✅ Archive completed successfully"
+
+        echo "Exporting archive with automatic signing..."
+        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
+           handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
+        fi
+        xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
+          -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
+          -allowProvisioningUpdates \
+          -quiet \
+          > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
+        echo "✅ Export completed successfully"
+
+        echo "IPA file exported successfully to ExportedIPA_Release directory.";
+      else
+        handle_xcode_error "No Xcode workspace or project found in Build/iOS."
+      fi
+    - cd "$CI_PROJECT_DIR"
+    - *common_update_version
+    #
+    # Send slack message
+    - echo "Loading Slack message template..."
+    - export MESSAGE_TEMPLATES_FILE="$CI_PROJECT_DIR/ci/message_templates.json"
+    - | # Use block scalar for multi-line script
+      if [ -z "$SLACK_USER_IDS" ]; then export NOTIFY_USERS=""; else export NOTIFY_USERS=$(echo "$SLACK_USER_IDS" | awk -F',' '{for (i=1; i<=NF; i++) printf "<@%s> ", $i}'); fi
+      template_key="uploaded_to_test_flight"
+      if [ ! -f "$MESSAGE_TEMPLATES_FILE" ]; then
+        echo "[ERROR] Message template file not found: $MESSAGE_TEMPLATES_FILE"
+        exit 1
+      fi
+      message=$(jq -r --arg key "$template_key" '.[$key]' "$MESSAGE_TEMPLATES_FILE")
+
+      if [ -z "$message" ] || [ "$message" == "null" ]; then
+        echo "[ERROR] Message template not found for key: $template_key in $MESSAGE_TEMPLATES_FILE"
+        exit 1
+      fi
+
+      formatted_message=$(printf "$message\n\n%s" "${NOTIFY_USERS}" | sed \
+        -e "s/{project_name}/${PROJECT_NAME}/g" \
+        -e "s/{platform}/🍏iOS/g" \
+        -e "s/{build_name}/${CURRENT_VERSION}/g")
+
+      echo "Formatted Slack message:"
+      echo "$formatted_message"
+
+    - python3 "$CI_PROJECT_DIR/ci/send_slack_message.py" "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
+
+  after_script:
+    - echo "🔍 Verifying external disk before backup..."
+    - chmod +x "$CI_PROJECT_DIR/ci/verify_external_disk.sh"
+    - "$CI_PROJECT_DIR/ci/verify_external_disk.sh"
+    - echo "🔧 Starting iOS build backup with enhanced verification..."
+    - chmod +x "$CI_PROJECT_DIR/ci/backup_ios_build.sh"
+    - "$CI_PROJECT_DIR/ci/backup_ios_build.sh"
+
+build_ios_ipa:
+  stage: build_ios
+  before_script:
+    - export BUILD_TYPE="IPA"
+    - *common_before_script
+    # Define the shell function directly here using the content alias
+    - |
+      handle_xcode_error() {
+        error_message="$1" # First argument is the error message
+        log_file="$2"      # Second argument is the log file (optional)
+        echo "-----------------------------------------------------"
+        echo "[ERROR] $error_message"
+        if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+          echo "Last 50 lines of $log_file:"
+          tail -n 50 "$log_file"
+        fi
+        echo "-----------------------------------------------------"
+        python3 "$CI_PROJECT_DIR/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+        if [ -n "$NOTIFY_DEV" ]; then
+          python3 "$CI_PROJECT_DIR/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+        fi
+        exit 1
+      }
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+      - script_failure
+  tags:
+    - macos
+  timeout: 60m
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^ios-develop\/ver_/'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME == "ios-develop"'
+      when: manual
+  script:
+    - *common_build_steps
+    - echo "Adding FIRDebugEnabled flag to Info.plist..."
+    - INFO_PLIST_PATH="Build/iOS/Info.plist"
+    - | # Use block scalar for multi-line if statement
+      if [ -f "$INFO_PLIST_PATH" ]; then
+        /usr/libexec/PlistBuddy -c "Delete :LSApplicationLaunchArguments" "$INFO_PLIST_PATH" 2>/dev/null || true
+        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments array" "$INFO_PLIST_PATH"
+        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments:0 string -FIRDebugEnabled" "$INFO_PLIST_PATH"
+        echo "FIRDebugEnabled flag added."
+      else
+        handle_xcode_error "Info.plist not found at $INFO_PLIST_PATH"
+      fi
+
+    # Add step to clean DerivedData before Xcode build
+    - echo "Ensuring clean build environment by removing previous DerivedData..."
+    - rm -rf "$XCODE_DERIVED_DATA_PATH"
+
+    - echo "Building .ipa file using Xcode with automatic signing..."
+    - cd Build/iOS
+    
+    # Check and create workspace if needed
+    - chmod +x "$CI_PROJECT_DIR/ci/create_workspace.sh"
+    - "$CI_PROJECT_DIR/ci/create_workspace.sh"
+    
+    - | # Use block scalar for multi-line if statement
+      if [ -d "Unity-iPhone.xcworkspace" ]; then
+        echo "Found Xcode workspace. Building with xcodebuild...";
+        export ARCHIVE_PATH="$CI_PROJECT_DIR/Build/iOS/${PROJECT_NAME}_${CURRENT_VERSION}_dev.xcarchive"
+        export EXPORT_LOG_PATH="$CI_PROJECT_DIR/export_dev.log"
+        export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
+
+        echo "Archiving to $ARCHIVE_PATH"
+        xcodebuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -configuration Release \
+          -archivePath "$ARCHIVE_PATH" \
+          -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+          DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
+          -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
+          > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
+        echo "✅ Archive completed successfully"
+
+        echo "Exporting archive with automatic signing..."
+
+        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
+          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
+        fi
+
+        # Simple export with automatic signing
+        echo "🎯 Exporting with automatic signing..."
+        OUTPUT_DIR="$CI_PROJECT_DIR/Build/iOS"
+        mkdir -p "$OUTPUT_DIR"
+
+        if xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$OUTPUT_DIR/ExportedIPA_Dev" \
+            -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
+            -allowProvisioningUpdates \
+            > "$EXPORT_LOG_PATH" 2>&1; then
+
+          echo "✅ Export completed successfully!"
+
+          # Find and verify IPA file
+          EXPORTED_IPA=$(find "$OUTPUT_DIR/ExportedIPA_Dev" -name "*.ipa" | head -1)
+          if [ -n "$EXPORTED_IPA" ] && [ -f "$EXPORTED_IPA" ]; then
+            IPA_SIZE=$(ls -lh "$EXPORTED_IPA" | awk '{print $5}')
+            echo "📱 IPA created successfully:"
+            echo "   File: $EXPORTED_IPA"
+            echo "   Size: $IPA_SIZE"
+          else
+            echo "⚠️  Export succeeded but IPA not found in expected location"
+          fi
+
+        else
+          echo "❌ Export failed"
+          handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
+        fi
+
+      elif [ -d "Unity-iPhone.xcodeproj" ]; then
+        echo "Found Xcode project. Building with xcodebuild...";
+        export ARCHIVE_PATH="$CI_PROJECT_DIR/Build/iOS/${PROJECT_NAME}_${CURRENT_VERSION}_dev.xcarchive"
+        export EXPORT_LOG_PATH="$CI_PROJECT_DIR/export_dev.log"
+        export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
+
+        echo "Archiving to $ARCHIVE_PATH"
+        xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
+          -archivePath "$ARCHIVE_PATH" \
+          -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+          DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
+          -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
+          > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
+        echo "✅ Archive completed successfully"
+
+        echo "Exporting archive with automatic signing..."
+
+        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
+          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
+        fi
+
+        xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
+          -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Dev" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
+          -allowProvisioningUpdates \
+          -quiet \
+          > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
+        echo "✅ Export completed successfully"
+
+        # Look for IPA file in the correct location
+        echo "🔍 Searching for IPA file in Build/iOS directory..."
+
+        IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" | head -n 1)
+        if [ -n "$IPA_FILE" ] && [ -f "$IPA_FILE" ]; then
+          IPA_SIZE=$(ls -lh "$IPA_FILE" | awk '{print $5}')
+          echo "✅ Found IPA: $IPA_FILE"
+          echo "📊 IPA Size: $IPA_SIZE"
+        else
+          echo "❌ Could not find IPA file"
+          echo "🔍 Available files:"
+          find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" -o -name "*.app" 2>/dev/null | head -5 || echo "No files found"
+        fi
+      else
+        handle_xcode_error "No Xcode workspace or project found in Build/iOS."
+      fi
+    - cd "$CI_PROJECT_DIR"
+    - *common_update_version
+
+  after_script:
+    - echo "🔍 Verifying external disk before backup..."
+    - chmod +x "$CI_PROJECT_DIR/ci/verify_external_disk.sh"
+    - "$CI_PROJECT_DIR/ci/verify_external_disk.sh"
+    - echo "🔧 Starting iOS build backup with enhanced verification..."
+    - chmod +x "$CI_PROJECT_DIR/ci/backup_ios_build.sh"
+    - "$CI_PROJECT_DIR/ci/backup_ios_build.sh"

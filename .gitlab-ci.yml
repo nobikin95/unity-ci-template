@@ -1,0 +1,47 @@
+stages:
+  - tag_creation
+  - check
+  - build_apk_by_tag
+  - build_aab
+  - build_ios
+  - build_self_test
+  - deploy
+  - cleanup
+  - verify
+
+variables:
+  PROJECT_NAME: "NotConfig"
+
+include:
+  - local: 'gitlab-ci-android.yml'
+  - local: 'gitlab-ci-ios.yml'
+
+check_critical_files:
+  stage: check
+  resource_group: project_unique_group
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "release"'
+  script:
+    - echo "Checking for critical file changes in Merge Request..."
+    - export API_URL="https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/changes"
+    - python3 ./ci/check_important_changes.py "$API_URL" "$GITLAB_API_TOKEN" "$CI_PROJECT_NAME" "$NOTIFY_DEV"
+
+create_release_tag:
+  stage: tag_creation
+  script:
+    - chmod +x ci/create_release_tag.sh
+    - ./ci/create_release_tag.sh "release/bundle_$AAB_VERSION"
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME == "release"'
+      when: on_success
+
+ios_create_release_tag:
+  stage: tag_creation
+  script:
+    - chmod +x ci/create_release_tag.sh
+    - ./ci/create_release_tag.sh "ios-release/bundle_$IOS_VERSION"
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME == "ios-release"'
+      when: on_success

@@ -1,0 +1,14 @@
+[
+  "Assets/Plugins/Android/",
+  "Assets/Plugins/iOS/",
+  "ProjectSettings/",
+  "Assets/Firebase/",
+  "Assets/Adjust/",
+  "Assets/MaxSdk/",
+  "Packages/",
+  "*.gradle",
+  "*.aar",
+  "*AndroidManifest.xml",
+  "google-services.json",
+  "GoogleService-Info.plist"
+]

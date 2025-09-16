@@ -1,0 +1,12 @@
+{
+    "build_start": "🚀 *Bắt đầu build...* 🔧\n🔹 *Dự án:* {project_name}\n📱 *Platform:* {platform}\t{build_type}\tversion: {version}\n⌛",
+    "build_fail": "❌ *Build thất bại!* ⚠️\n🔹 *Dự án:* {project_name}\n📱 *Platform:* {platform}_{build_type}_{version}\n🔎 Vui lòng kiểm tra log để xác định nguyên nhân.",
+    "warning_message": "⚠️ *Cảnh báo thay đổi file!* ⚠️\n🔹 *Dự án:* {project_name}\n📝 *File bị thay đổi:* {changed_files}\n⚠️ Vui lòng kiểm tra để đảm bảo hệ thống ổn định.",
+    "verify_token_start": "🔍 *Đang kiểm tra token...* 🔑\n🔹 *Dự án:* {project_name}\n📌 *Adjust Token:* {expected_token}",
+    "verify_token_fail": "⚠️ *Xác minh token thất bại!* ❌\n🔹 *Dự án:* {project_name}\n📌 *Expected Token:* {expected_token}\n🔴 *Token thực tế:* {current_token}\n🔎 Vui lòng kiểm tra lại!\n{tagged_users}",
+    "verify_token_success": "✅ *Token xác minh thành công!* 🎉\n🔹 *Dự án:* {project_name}\n📌 *Adjust Token:* {expected_token}",
+    "check_build_fail": "🚨 *Daily Build Failed!* ⚠️\n🔎 CI/CD phát hiện lỗi build trong quá trình kiểm tra hàng ngày.",
+    "uploaded_to_internal": "✅ *Build đã được upload lên Internal!* 📤\n🔹 *Dự án:* {project_name}\n📱 *Nền tảng:* {platform}\n🔗 *Build:* {build_name}.",
+    "uploaded_to_internal_fail": "❌ *Upload lên Internal fail!* 📤\n🔹 *Dự án:* {project_name}\n📱 *Nền tảng:* {platform}\n🔗 *Build:* {build_name}.",
+    "uploaded_to_test_flight": "✅ *Build đã được upload lên iOS Testflight!* 📤\n🔹 *Dự án:* {project_name}\n📱 *Nền tảng:* {platform}\n🔗 *Build:* {build_name}."
+}

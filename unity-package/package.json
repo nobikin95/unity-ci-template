@@ -1,0 +1,13 @@
+{
+  "name": "com.zego.unity-ci-build-tools",
+  "version": "1.0.0",
+  "displayName": "Unity CI Build Tools",
+  "description": "Shared build scripts for Unity CI/CD pipeline",
+  "unity": "2022.3",
+  "dependencies": {},
+  "keywords": ["ci", "build", "automation"],
+  "author": {
+    "name": "ThanhTQ",
+    "email": "thanhtq@ikameglobal.com"
+  }
+}
