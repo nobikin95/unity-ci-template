@@ -12,10 +12,6 @@ stages:
 variables:
   PROJECT_NAME: "NotConfig"
 
-include:
-  - local: 'gitlab-ci-android.yml'
-  - local: 'gitlab-ci-ios.yml'
-
 check_critical_files:
   stage: check
   resource_group: project_unique_group
