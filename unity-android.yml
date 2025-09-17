@@ -97,7 +97,7 @@ variables:
   - if [ -z "$NOTIFY_DEV" ]; then
       echo "NOTIFY_DEV is not set, skipping notification";
     else
-      python3 ./ci/send_slack_direct_message.py build_start project_name="$PROJECT_NAME" notify_user="$NOTIFY_DEV" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}";
+      python3 ./unity-ci-template/ci/send_slack_direct_message.py build_start project_name="$PROJECT_NAME" notify_user="$NOTIFY_DEV" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}";
     fi
 
 .disable_app_binary : &disable_app_binary
@@ -161,16 +161,16 @@ build_apk_and_verify:
     - export BUILD_TYPE="📱APK"
     - export VERSION_INFO="${APK_VERSION}"
     - *common_before_script
-    - chmod +x ci/wait-for-resource.sh ci/release-resource.sh
-    - ./ci/wait-for-resource.sh "global_verify_apk"
+    - chmod +x unity-ci-template/ci/wait-for-resource.sh unity-ci-template/ci/release-resource.sh
+    - ./unity-ci-template/ci/wait-for-resource.sh "global_verify_apk"
   timeout: 35m
   rules:
     - if: '$CI_COMMIT_TAG =~ /^release\/bundle.*$/'
       when: on_success 
   script:
     # Update Scripting Symbol
-    - chmod +x ./ci/update_scripting_symbols.sh
-    - ./ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
+    - chmod +x ./unity-ci-template/ci/update_scripting_symbols.sh
+    - ./unity-ci-template/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
 
     # Resolve packages to generate Library/PackageCache
     - echo "Resolving Unity packages to generate Library/PackageCache..."
@@ -248,8 +248,8 @@ build_apk_and_verify:
         echo "Extracted GOOGLE_PLAY_PACKAGE_NAME $GOOGLE_PLAY_PACKAGE_NAME";
       fi
 
-    - chmod +x ./ci/start_emulator_check_token.py
-    - ./ci/start_emulator_check_token.py apkPath=${STORAGE_PATH}/${APK_NAME} appPackage=$GOOGLE_PLAY_PACKAGE_NAME
+    - chmod +x ./unity-ci-template/ci/start_emulator_check_token.py
+    - ./unity-ci-template/ci/start_emulator_check_token.py apkPath=${STORAGE_PATH}/${APK_NAME} appPackage=$GOOGLE_PLAY_PACKAGE_NAME
 
     # Update APK_VERSION in GitLab CI/CD Variables 
     - echo "Updating APK_VERSION in GitLab CI/CD Variables..."
@@ -263,7 +263,7 @@ build_apk_and_verify:
 
     - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
   after_script:
-    - ./ci/release-resource.sh "global_verify_apk"
+    - ./unity-ci-template/ci/release-resource.sh "global_verify_apk"
   
 
 build_aab:
@@ -283,14 +283,14 @@ build_aab:
     - export VERSION_INFO="bundle_${AAB_VERSION}_version_${APK_VERSION}"
     - *common_before_script
     - *send_notify_dev
-    - chmod +x ci/wait-for-resource.sh ci/release-resource.sh
-    - ./ci/wait-for-resource.sh "global_build_aab"
+    - chmod +x unity-ci-template/ci/wait-for-resource.sh unity-ci-template/ci/release-resource.sh
+    - ./unity-ci-template/ci/wait-for-resource.sh "global_build_aab"
   timeout: 40m
   rules:
     - if: '$CI_COMMIT_TAG =~ /^release\/bundle.*$/'
       when: on_success
   script:
-    - export MESSAGE_TEMPLATES_FILE="./ci/message_templates.json"
+    - export MESSAGE_TEMPLATES_FILE="./unity-ci-template/ci/message_templates.json"
     - |
       template_key="build_start" 
       message=$(jq -r --arg key "$template_key" '.[$key]' "$MESSAGE_TEMPLATES_FILE")
@@ -302,13 +302,13 @@ build_aab:
 
       formatted_message=$(echo  "$message" | sed -e "s/{project_name}/${PROJECT_NAME}/g" -e "s/{platform}/Android_AAB/g" -e "s/{build_type}/${BUILD_TYPE}/g" -e "s/{version}/${VERSION_INFO}/g")
   
-    - python3 ./ci/send_slack_message.py "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
+    - python3 ./unity-ci-template/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
     # Fetch changelog for release tags on release branch
     - |
       if [[ "$CI_COMMIT_TAG" =~ ^release/bundle.*$ && "$CI_BRANCH" == "release" ]]; then
         echo "Detected release tag on release branch. Fetching changelog...";
-        chmod +x ./ci/fetch_changelog.sh;
-        ./ci/fetch_changelog.sh --target_branch=release;
+        chmod +x ./unity-ci-template/ci/fetch_changelog.sh;
+        ./unity-ci-template/ci/fetch_changelog.sh --target_branch=release;
         export CHANGELOG=$(cat changelog.tmp);
       else
         echo "Extracting changelog from tag..."
@@ -328,8 +328,8 @@ build_aab:
     - echo "$CHANGELOG" > changelog.txt
 
     # Update Scripting Symbol
-    - chmod +x ./ci/update_scripting_symbols.sh
-    - ./ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
+    - chmod +x ./unity-ci-template/ci/update_scripting_symbols.sh
+    - ./unity-ci-template/ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
 
     # Clear Library directory
     - if [ -d "./Library" ]; then
@@ -400,7 +400,7 @@ build_aab:
     - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEXT_APK_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
   
   after_script:
-      - ./ci/release-resource.sh "global_build_aab"
+      - ./unity-ci-template/ci/release-resource.sh "global_build_aab"
   
   artifacts:
     paths:
@@ -488,7 +488,7 @@ build_apk_by_tag:
     - echo "Preparing to upload APK..."
     - if [ -f "Build/Android/${APK_NAME}" ]; then
         echo "Uploading APK...";
-        python3 ./ci/upload_slack.py "Build/Android/${APK_NAME}" "$FULL_CHANGELOG" "$SLACK_USER_IDS";
+        python3 ./unity-ci-template/ci/upload_slack.py "Build/Android/${APK_NAME}" "$FULL_CHANGELOG" "$SLACK_USER_IDS";
       else
         echo "Error... No APK found for upload.";
         send_build_failure_notification
@@ -582,7 +582,7 @@ build_self_test:
     - echo "Preparing to upload APK..."
     - if [ -f "Build/Android/${APK_NAME}" ]; then
         echo "Uploading APK...";
-        python3 ./ci/send_slack_file_dm.py "Build/Android/${APK_NAME}" "Build Self Test:" "$MAIN_DEV";
+        python3 ./unity-ci-template/ci/send_slack_file_dm.py "Build/Android/${APK_NAME}" "Build Self Test:" "$MAIN_DEV";
       else
         echo "Error... No APK found for upload.";
         send_build_failure_notification
@@ -617,7 +617,7 @@ check_build_failure:
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
     - start=$(date +%s)
     - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
-        python3 ./ci/send_slack_message.py "$SLACK_CHANNEL_ID" "?? Daily Build Failed... CI/CD detected a build failure during the daily build check." "$SLACK_BOT_TOKEN" "? Please review the pipeline logs and address the issue. ???? Job Details... $CI_JOB_URL";
+        python3 ./unity-ci-template/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "?? Daily Build Failed... CI/CD detected a build failure during the daily build check." "$SLACK_BOT_TOKEN" "? Please review the pipeline logs and address the issue. ???? Job Details... $CI_JOB_URL";
         exit 1;
       }
     - end=$(date +%s)
@@ -626,7 +626,7 @@ check_build_failure:
     - ls -l Build/Android/
     - if [ ! -f "Build/Android/${APK_NAME}" ]; then
         echo "Error... APK file not found. Build failed.";
-        python3 ./ci/send_slack_message.py "$SLACK_CHANNEL_ID" "?? Daily Build Failed... CI/CD detected a build failure during the daily build check." "$SLACK_BOT_TOKEN" "? Please review the pipeline logs and address the issue. ???? Job Details... $CI_JOB_URL";
+        python3 ./unity-ci-template/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "?? Daily Build Failed... CI/CD detected a build failure during the daily build check." "$SLACK_BOT_TOKEN" "? Please review the pipeline logs and address the issue. ???? Job Details... $CI_JOB_URL";
         exit 1;
       else
         echo "APK build succeeded.";
@@ -693,7 +693,7 @@ upload_internal:
     
     - echo "Preparing fastlane configuration..."
     - mkdir -p fastlane
-    - cp ci/deploy/Fastfile_android fastlane/Fastfile
+    - cp unity-ci-template/ci/deploy/Fastfile_android fastlane/Fastfile
     - export FASTLANE_SKIP_INTERACTIVE=1
     - export FASTLANE_DEBUG=1
     - echo "Starting fastlane upload_internal in verbose mode..."
@@ -718,7 +718,7 @@ upload_internal:
       fi
     # Send slack message 
     - echo "Loading Slack message template..."
-    - export MESSAGE_TEMPLATES_FILE="./ci/message_templates.json"
+    - export MESSAGE_TEMPLATES_FILE="./unity-ci-template/ci/message_templates.json"
 
     - export NOTIFY_USERS=$(echo "$SLACK_USER_IDS" | awk -F',' '{for (i=1; i<=NF; i++) printf "<@%s> ", $i}')
 
@@ -744,7 +744,7 @@ upload_internal:
       echo "Formatted Slack message:"
       echo "$formatted_message"
 
-    - python3 ./ci/send_slack_message.py "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
+    - python3 ./unity-ci-template/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
 
 
   after_script:
@@ -752,7 +752,7 @@ upload_internal:
     - if [ "$CI_JOB_STATUS" == "failed" ]; then
         echo "Job failed! Executing failure script...";
         export FAILURE_MESSAGE="🚨 Job '${CI_JOB_NAME}' in pipeline '${CI_PIPELINE_URL}' failed! Check the logs.";        
-        python3 ./ci/send_slack_direct_message.py uploaded_to_internal_fail project_name="$PROJECT_NAME" platform="Android" build_name="$AAB_NAME" notify_user="$NOTIFY_DEV";
+        python3 ./unity-ci-template/ci/send_slack_direct_message.py uploaded_to_internal_fail project_name="$PROJECT_NAME" platform="Android" build_name="$AAB_NAME" notify_user="$NOTIFY_DEV";
         echo "Failure script executed.";
       fi
       
