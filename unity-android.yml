@@ -81,12 +81,12 @@ variables:
   - grep "m_ShowUnitySplashLogo:" ProjectSettings/ProjectSettings.asset
 
   # Webhook
-  - python3 ./ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}"
+  - python3 ./unity-ci-template/ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}"
   - send_build_failure_notification() {
       echo "Sending build failure notifications...";
-      python3 ./ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" build_type="${BUILD_TYPE}" version="${VERSION_INFO}" platform="Android";
+      python3 ./unity-ci-template/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" build_type="${BUILD_TYPE}" version="${VERSION_INFO}" platform="Android";
       if [ -n "$NOTIFY_DEV" ]; then
-        python3 ./ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" notify_user="$NOTIFY_DEV" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}" log_file="$CI_PROJECT_DIR/build_output.log";
+        python3 ./unity-ci-template/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" notify_user="$NOTIFY_DEV" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}" log_file="$CI_PROJECT_DIR/build_output.log";
       else
         echo "NOTIFY_DEV not set, skipping direct message.";
       fi
