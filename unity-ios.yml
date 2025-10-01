@@ -112,8 +112,8 @@ variables:
   - | # Use block scalar for multi-line if with error handling
     if [ ! -f "$UNITY_PATH" ]; then
       echo "Error... Unity executable not found at $UNITY_PATH";
-      python3 ./unity-ci-template/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-      python3 ./unity-ci-template/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+      python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+      python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
       exit 1;
     fi
   - export CURRENT_VERSION=$IOS_VERSION
@@ -129,12 +129,12 @@ variables:
 
 .common_build_steps: &common_build_steps
   # Update Scripting Symbol
-  - chmod +x ./unity-ci-template/ci/update_scripting_symbols.sh
-  - ./unity-ci-template/ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
+  - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
+  - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
   - echo "Starting iOS .ipa build..."
   - mkdir -p Build/iOS
-  - python3 ./unity-ci-template/ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
-  - python3 ./unity-ci-template/ci/send_slack_direct_message.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" notify_user="$NOTIFY_DEV" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+  - python3 Assets/cicd/ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+  - python3 Assets/cicd/ci/send_slack_direct_message.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" notify_user="$NOTIFY_DEV" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
   - |
     # Function to perform Unity build with framework verification retry
     perform_unity_build_with_retry() {
@@ -155,8 +155,8 @@ variables:
         $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget iOS -executeMethod BuildScript.BuildiOS -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
           echo "Unity build failed. Output log:";
           tail -n 50 $CI_PROJECT_DIR/build_output.log;
-          python3 ./unity-ci-template/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-          python3 ./unity-ci-template/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+          python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+          python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
           exit 1;
         }
         
@@ -166,26 +166,26 @@ variables:
         # Check if Xcode project exists
         if [ ! -d "Build/iOS/Unity-iPhone.xcodeproj" ]; then
           echo "Error... Xcode project not found in Build/iOS directory after Unity build.";
-          python3 ./unity-ci-template/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-          python3 ./unity-ci-template/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+          python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+          python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
           exit 1;
         fi
         
         echo "Validating Xcode project file..."
         plutil -lint Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj || {
           echo "The Xcode project file has syntax errors.";
-          python3 ./unity-ci-template/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-          python3 ./unity-ci-template/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+          python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+          python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
           exit 1;
         }
         
         echo "⚡ Running Xcode Framework Verification..."
-        chmod +x unity-ci-template/ci/verify_frameworks.sh
+        chmod +x Assets/cicd/ci/verify_frameworks.sh
         
         # Chạy verify_frameworks.sh với error handling
         echo ""
         echo "🔍 Starting framework verification..."
-        if ./unity-ci-template/ci/verify_frameworks.sh; then
+        if Assets/cicd/ci/verify_frameworks.sh; then
           echo ""
           echo "✅ Framework verification passed!"
           echo "🎉 All required frameworks are present and correctly configured!"
@@ -209,7 +209,7 @@ variables:
             echo "❌ Framework verification failed after $max_retries attempts."
             echo "📋 Final missing frameworks:"
             echo ""
-            ./unity-ci-template/ci/verify_frameworks.sh || echo "Framework verification script failed"
+            Assets/cicd/ci/verify_frameworks.sh || echo "Framework verification script failed"
             echo ""
             echo "💡 This might indicate an issue with the BuildScript.cs post-processing"
             echo "⚠️ Continuing with build despite framework verification issues..."
@@ -236,8 +236,8 @@ variables:
         echo "Restored project.pbxproj from backup.";
       else
         echo "No backup found. Project file may be corrupted.";
-        python3 ./unity-ci-template/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-        python3 ./unity-ci-template/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+        python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+        python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
         exit 1;
       fi
     }
@@ -270,9 +270,9 @@ variables:
     tail -n 50 "$log_file"
   fi
   echo "-----------------------------------------------------"
-  python3 "$CI_PROJECT_DIR/unity-ci-template/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+  python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
   if [ -n "$NOTIFY_DEV" ]; then
-    python3 "$CI_PROJECT_DIR/unity-ci-template/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+    python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
   fi
   exit 1
 
@@ -293,9 +293,9 @@ build_ios_release:
           tail -n 50 "$log_file"
         fi
         echo "-----------------------------------------------------"
-        python3 "$CI_PROJECT_DIR/unity-ci-template/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
         if [ -n "$NOTIFY_DEV" ]; then
-          python3 "$CI_PROJECT_DIR/unity-ci-template/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+          python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
         fi
         exit 1
       }
@@ -316,7 +316,7 @@ build_ios_release:
   script:
     - *common_build_steps
     - echo "Loading Slack message template..."
-    - export MESSAGE_TEMPLATES_FILE="$CI_PROJECT_DIR/unity-ci-template/ci/message_templates.json"
+    - export MESSAGE_TEMPLATES_FILE="$CI_PROJECT_DIR/Assets/cicd/ci/message_templates.json"
     - | # Use block scalar for multi-line script
       template_key="build_start"
       if [ ! -f "$MESSAGE_TEMPLATES_FILE" ]; then
@@ -338,7 +338,7 @@ build_ios_release:
 
       echo "Formatted Slack message:"
       echo "$start_build_message"
-    - python3 ./unity-ci-template/ci/send_slack_message.py "C07UU3A6H0R" "$start_build_message" "$SLACK_BOT_TOKEN"
+    - python3 Assets/cicd/ci/send_slack_message.py "C07UU3A6H0R" "$start_build_message" "$SLACK_BOT_TOKEN"
 
     # Add step to clean DerivedData before Xcode build
     - echo "Ensuring clean build environment by removing previous DerivedData..."
@@ -348,8 +348,8 @@ build_ios_release:
     - cd Build/iOS
     
     # Check and create workspace if needed
-    - chmod +x "$CI_PROJECT_DIR/unity-ci-template/ci/create_workspace.sh"
-    - "$CI_PROJECT_DIR/unity-ci-template/ci/create_workspace.sh"
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
+    - "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
     
     - | # Use block scalar for the entire multi-line if/then/else/fi block
       if [ -d "Unity-iPhone.xcworkspace" ]; then
@@ -416,7 +416,7 @@ build_ios_release:
     #
     # Send slack message
     - echo "Loading Slack message template..."
-    - export MESSAGE_TEMPLATES_FILE="$CI_PROJECT_DIR/unity-ci-template/ci/message_templates.json"
+    - export MESSAGE_TEMPLATES_FILE="$CI_PROJECT_DIR/Assets/cicd/ci/message_templates.json"
     - | # Use block scalar for multi-line script
       if [ -z "$SLACK_USER_IDS" ]; then export NOTIFY_USERS=""; else export NOTIFY_USERS=$(echo "$SLACK_USER_IDS" | awk -F',' '{for (i=1; i<=NF; i++) printf "<@%s> ", $i}'); fi
       template_key="uploaded_to_test_flight"
@@ -439,15 +439,15 @@ build_ios_release:
       echo "Formatted Slack message:"
       echo "$formatted_message"
 
-    - python3 "$CI_PROJECT_DIR/unity-ci-template/ci/send_slack_message.py" "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
+    - python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_message.py" "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
 
   after_script:
     - echo "🔍 Verifying external disk before backup..."
-    - chmod +x "$CI_PROJECT_DIR/unity-ci-template/ci/verify_external_disk.sh"
-    - "$CI_PROJECT_DIR/unity-ci-template/ci/verify_external_disk.sh"
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
+    - "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
     - echo "🔧 Starting iOS build backup with enhanced verification..."
-    - chmod +x "$CI_PROJECT_DIR/unity-ci-template/ci/backup_ios_build.sh"
-    - "$CI_PROJECT_DIR/unity-ci-template/ci/backup_ios_build.sh"
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
+    - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
 
 build_ios_ipa:
   stage: build_ios
@@ -466,9 +466,9 @@ build_ios_ipa:
           tail -n 50 "$log_file"
         fi
         echo "-----------------------------------------------------"
-        python3 "$CI_PROJECT_DIR/unity-ci-template/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
         if [ -n "$NOTIFY_DEV" ]; then
-          python3 "$CI_PROJECT_DIR/unity-ci-template/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+          python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
         fi
         exit 1
       }
@@ -510,8 +510,8 @@ build_ios_ipa:
     - cd Build/iOS
     
     # Check and create workspace if needed
-    - chmod +x "$CI_PROJECT_DIR/unity-ci-template/ci/create_workspace.sh"
-    - "$CI_PROJECT_DIR/unity-ci-template/ci/create_workspace.sh"
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
+    - "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
     
     - | # Use block scalar for multi-line if statement
       if [ -d "Unity-iPhone.xcworkspace" ]; then
@@ -615,8 +615,8 @@ build_ios_ipa:
 
   after_script:
     - echo "🔍 Verifying external disk before backup..."
-    - chmod +x "$CI_PROJECT_DIR/unity-ci-template/ci/verify_external_disk.sh"
-    - "$CI_PROJECT_DIR/unity-ci-template/ci/verify_external_disk.sh"
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
+    - "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
     - echo "🔧 Starting iOS build backup with enhanced verification..."
-    - chmod +x "$CI_PROJECT_DIR/unity-ci-template/ci/backup_ios_build.sh"
-    - "$CI_PROJECT_DIR/unity-ci-template/ci/backup_ios_build.sh"
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
+    - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
