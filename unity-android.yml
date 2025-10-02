@@ -765,39 +765,46 @@ upload_internal:
 
 clear_library_cache:
   stage: check
+  resource_group: project_unique_group
   script:
-    - echo "🧹 Starting Library Cache Clear Operation";
-    - echo "Timestamp $(date)";
-    - echo "Triggered by $GITLAB_USER_NAME ($GITLAB_USER_EMAIL)";
-    - echo "Pipeline Source $CI_PIPELINE_SOURCE";
-    - echo "Clearing Library/*";
-    - if [ -d "./Library" ]; then
-        echo "📁 Found ./Library directory, proceeding with cleanup...";
-        echo "Directory size before cleanup:";
-        du -sh "./Library" 2>/dev/null || echo "Could not calculate directory size";
-        if rm -rf "./Library/"*; then
-          echo "✅ Successfully cleared ./Library directory.";
-          echo "📊 Directory size after cleanup:";
-          du -sh "./Library" 2>/dev/null || echo "Directory is now empty";
+    - echo "🧹 Starting Library Cache Clear Operation"
+    - echo "📅 Timestamp $(date '+%Y-%m-%d %H:%M:%S')"
+    - echo "👤 Triggered by ${TRIGGERED_BY:-$GITLAB_USER_NAME} (${GITLAB_USER_EMAIL:-Unknown})"
+    - echo "🔧 Trigger source ${TRIGGER_SOURCE:-$CI_PIPELINE_SOURCE}"
+    - echo "📋 Operation type ${OPERATION_TYPE:-CLEAR_CACHE}"
+    - echo ""
+    - echo "🔍 Checking Library directory..."
+    - |
+      if [ -d "./Library" ]; then
+        echo "📂 Library directory found"
+        echo "📊 Current size: $(du -sh ./Library 2>/dev/null || echo 'Unable to calculate')"
+        echo ""
+        echo "🗑️ Clearing Library directory contents..."
+        if rm -rf ./Library/*; then
+          echo "✅ Successfully cleared Library directory"
+          echo "📊 New size: $(du -sh ./Library 2>/dev/null || echo '0')"
         else
-          echo "❌ Failed to clear ./Library directory. Please check permissions...";
-          exit 1;
-        fi;
-        echo "📋 Contents of ./Library after clearing (should be empty):";
-        ls -la "./Library" || echo "Directory is completely empty";
+          echo "❌ Failed to clear Library directory"
+          echo "⚠️ Please check permissions and try again"
+          exit 1
+        fi
+        echo "📋 Contents of ./Library after clearing (should be empty):"
+        ls -la ./Library || echo "Directory is completely empty"
       else
-        echo "⚠️ ./Library directory not found or not accessible.";
-        echo "This might be normal if no builds have been run yet.";
+        echo "⚠️ Library directory not found"
+        echo "ℹ️ This may be the first build or Library is not cached"
       fi
-    - echo "🎉 Library cache clear operation completed successfully";
+    - echo ""
+    - echo "✅ Clear Library Cache operation completed successfully"
+    - echo "📅 Completed at $(date '+%Y-%m-%d %H:%M:%S')"
   rules:
+    # Auto-run when triggered from Unity Editor via API with OPERATION_TYPE variable
+    - if: '$CI_PIPELINE_SOURCE == "api" && $OPERATION_TYPE == "CLEAR_CACHE"'
+      when: on_success
+    # Manual trigger from GitLab Web UI (for safety)
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
+    # Fallback: manual for any other API triggers without OPERATION_TYPE
     - if: '$CI_PIPELINE_SOURCE == "api"'
       when: manual
   allow_failure: true
-  artifacts:
-    reports:
-      junit: []
-    when: always
-    expire_in: 1 hour
