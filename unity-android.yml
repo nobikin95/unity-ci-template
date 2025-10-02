@@ -230,8 +230,28 @@ build_apk_and_verify:
       else
         echo "APK build succeeded.";
       fi
-      
-      
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+        echo "⚠ Check ProjectSettings.asset AndroidTargetArchitectures setting";
+        echo "⚠ Expected value: 7 (ARMv7 + ARM64 + x86_64)";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
+
     - echo "Copying APK to storage directory..."
     - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/APK/"
     - mkdir -p "${STORAGE_PATH}"
@@ -472,8 +492,26 @@ build_apk_by_tag:
       else
         echo "APK build succeeded.";
       fi
-      
-      
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
+
     - echo "Copying APK to storage directory..."
     - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/APK/"
     - mkdir -p "${STORAGE_PATH}"
@@ -578,7 +616,25 @@ build_self_test:
       else
         echo "APK build succeeded.";
       fi
-    
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
     - echo "Preparing to upload APK..."
     - if [ -f "Build/Android/${APK_NAME}" ]; then
         echo "Uploading APK...";
@@ -631,8 +687,26 @@ check_build_failure:
       else
         echo "APK build succeeded.";
       fi
-    
-    - echo "Build Succeeded..."    
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
+    - echo "Build Succeeded..."
 
 upload_internal:
   stage: deploy
