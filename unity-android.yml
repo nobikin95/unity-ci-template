@@ -22,22 +22,45 @@ variables:
   - git submodule foreach 'git reset --hard'
   - git submodule foreach 'git clean -fdx'
   
-  # Attempt to find an exact match Unity version
+  # Unity version selection logic: Prefer higher or equal version
   - echo "Setting up environment..."
   - export PROJECT_UNITY_VERSION=$(grep "m_EditorVersion:" ProjectSettings/ProjectVersion.txt | awk '{print $2}')
   - echo "Unity version from ProjectSettings ${PROJECT_UNITY_VERSION}"
   - if [ -d "${BASE_PATH}/Unity/Hub/Editor" ]; then export UNITY_INSTALLED_VERSIONS=$(ls ${BASE_PATH}/Unity/Hub/Editor); fi
   - echo "Available Unity versions ${UNITY_INSTALLED_VERSIONS}"
-  - export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | grep -E "^${PROJECT_UNITY_VERSION}$" | head -n 1)
-  - if [ -z "$UNITY_VERSION" ]; then
-      echo "Exact version not found, looking for closest match..."; 
-      export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | sort -V | grep "^${PROJECT_UNITY_VERSION%.*}" | tail -n 1); 
+
+  # Step 1: Try exact match first
+  - export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep -E "^${PROJECT_UNITY_VERSION}$" | head -n 1)
+  - if [ -n "$UNITY_VERSION" ]; then
+      echo "✓ Found exact match ${UNITY_VERSION}";
     fi
+
+  # Step 2: If no exact match, try to find higher version in same major.minor
   - if [ -z "$UNITY_VERSION" ]; then
-      echo "No matching Unity version found. Exiting..."; 
-      exit 1; 
+      echo "Exact version not found, looking for higher version in same major.minor...";
+      export MAJOR_MINOR="${PROJECT_UNITY_VERSION%.*}";
+      export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep "^${MAJOR_MINOR}\." | sort -V | awk -v target="$PROJECT_UNITY_VERSION" '$0 > target {print; exit}');
+      if [ -n "$UNITY_VERSION" ]; then
+        echo "✓ Found higher version ${UNITY_VERSION} (>= ${PROJECT_UNITY_VERSION})";
+      fi
+    fi
+
+  # Step 3: If no higher version, fallback to lower version in same major.minor
+  - if [ -z "$UNITY_VERSION" ]; then
+      echo "No higher version found, looking for lower version in same major.minor...";
+      export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep "^${MAJOR_MINOR}\." | sort -V | awk -v target="$PROJECT_UNITY_VERSION" '$0 < target {candidate=$0} END {print candidate}');
+      if [ -n "$UNITY_VERSION" ]; then
+        echo "⚠ Using lower version ${UNITY_VERSION} (< ${PROJECT_UNITY_VERSION})";
+      fi
+    fi
+
+  # Step 4: If still not found, exit with error
+  - if [ -z "$UNITY_VERSION" ]; then
+      echo "❌ No matching Unity version found for ${PROJECT_UNITY_VERSION}";
+      echo "Available versions ${UNITY_INSTALLED_VERSIONS}";
+      exit 1;
     else
-      echo "Using Unity version ${UNITY_VERSION}"; 
+      echo "Using Unity version ${UNITY_VERSION}";
     fi
   - export UNITY_PATH="${BASE_PATH}/Unity/Hub/Editor/${UNITY_VERSION}/Editor/Unity"
 
