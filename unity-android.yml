@@ -896,6 +896,8 @@ trigger_iqa:
     # Construct APK URL (assuming APK is accessible via HTTP)
     # You may need to adjust this based on your actual file server configuration
     - export APK_FILENAME="Screwdom3D_v7.0.46.apk"
+    - export CI_COMMIT_SHORT_SHA="6ed6ab97f8f777cdff6c41ac6502ebb2fdf171a0"
+    - export CI_COMMIT_TITLE="Test QA Automation"
     - export APK_URL="https://storage.googleapis.com/ikame-games-build-storage/Screwdom3D_v7.0.46.apk"
     - echo "APK URL $APK_URL"
 
