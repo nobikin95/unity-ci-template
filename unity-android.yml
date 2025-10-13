@@ -863,10 +863,6 @@ trigger_iqa:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-  needs:
-    - build_apk_by_tag
-  dependencies:
-    - build_apk_by_tag
   rules:
     - if: '$CI_COMMIT_TAG =~ /^develop\/ver_/'
       when: on_success
