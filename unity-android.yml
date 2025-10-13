@@ -854,7 +854,7 @@ upload_internal:
     expire_in: 1 day  
 
 trigger_iqa:
-  stage: verify
+  stage: qa_automation
   resource_group: "${CI_PROJECT_ID}"
   retry:
     max: 2
