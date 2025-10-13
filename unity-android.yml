@@ -853,6 +853,101 @@ upload_internal:
     when: always
     expire_in: 1 day  
 
+trigger_iqa:
+  stage: build_apk_by_tag
+  resource_group: "${CI_PROJECT_ID}"
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+  needs:
+    - build_apk_by_tag
+  dependencies:
+    - build_apk_by_tag
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^develop\/ver_/'
+      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  timeout: 5m
+  script:
+    - echo "🚀 Starting IQA Trigger Job..."
+    - echo "📅 Timestamp $(date '+%Y-%m-%d %H:%M:%S')"
+
+    # Extract package name from ProjectSettings
+    - if [ -z "$GOOGLE_PLAY_PACKAGE_NAME" ]; then
+        echo "GOOGLE_PLAY_PACKAGE_NAME is not set. Extracting from ProjectSettings/ProjectSettings.asset...";
+        export GOOGLE_PLAY_PACKAGE_NAME=$(grep "Android:" ProjectSettings/ProjectSettings.asset | head -n 1 | awk '{print $2}');
+        echo "Extracted GOOGLE_PLAY_PACKAGE_NAME $GOOGLE_PLAY_PACKAGE_NAME";
+      fi
+
+    # Read APK path from artifact
+    - if [ -f "apk_path.txt" ]; then
+        export APK_PATH=$(cat apk_path.txt);
+        echo "APK Path from artifact $APK_PATH";
+      else
+        echo "❌ Error apk_path.txt not found. Cannot proceed with IQA trigger.";
+        exit 1;
+      fi
+
+    # Construct APK URL (assuming APK is accessible via HTTP)
+    # You may need to adjust this based on your actual file server configuration
+    - export APK_FILENAME="Screwdom3D_v7.0.46.apk"
+    - export APK_URL="https://storage.googleapis.com/ikame-games-build-storage/Screwdom3D_v7.0.46.apk"
+    - echo "APK URL $APK_URL"
+
+    # Prepare JSON payload
+    - |
+      cat > iqa_payload.json <<EOF
+      {
+        "urlAPK": "${APK_URL}",
+        "packageName": "${GOOGLE_PLAY_PACKAGE_NAME}",
+        "commitShortSha": "${CI_COMMIT_SHORT_SHA}",
+        "commitTitle": "${CI_COMMIT_TITLE}"
+      }
+      EOF
+
+    - echo "📋 IQA Payload:"
+    - cat iqa_payload.json
+
+    # Call IQA API
+    - echo "📡 Calling IQA API..."
+    - |
+      HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d @iqa_payload.json \
+        https://auto.ikameglobal.com/iqa/trigger)
+
+      HTTP_BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
+      HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n 1)
+
+      echo "HTTP Status Code: $HTTP_CODE"
+      echo "Response Body: $HTTP_BODY"
+
+      if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+        echo "✅ IQA API call successful!"
+        echo "Response: $HTTP_BODY"
+      else
+        echo "❌ IQA API call failed with status code $HTTP_CODE"
+        echo "Response: $HTTP_BODY"
+        echo "⚠️ Continuing pipeline despite IQA trigger failure..."
+        exit 0  # Don't fail the pipeline, just log the error
+      fi
+
+    - echo "✅ IQA Trigger job completed"
+    - echo "📅 Completed at $(date '+%Y-%m-%d %H:%M:%S')"
+
+  artifacts:
+    paths:
+      - iqa_payload.json
+    when: always
+    expire_in: 1 day
+
+  allow_failure: true  # Don't block pipeline if IQA trigger fails
+
 clear_library_cache:
   stage: check
   resource_group: project_unique_group
