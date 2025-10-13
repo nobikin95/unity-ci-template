@@ -9,7 +9,7 @@ variables:
 .common_before_script: &common_before_script
   - export NOTIFY_DEV="U043T5P1G9Z"
   - export SLACK_USER_IDS="C07UU3A6H0R"
-  - git config --global url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
+  - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
   - git submodule update --init --recursive --checkout
   - git submodule foreach 'git reset --hard'
@@ -878,15 +878,6 @@ trigger_iqa:
         echo "GOOGLE_PLAY_PACKAGE_NAME is not set. Extracting from ProjectSettings/ProjectSettings.asset...";
         export GOOGLE_PLAY_PACKAGE_NAME=$(grep "Android:" ProjectSettings/ProjectSettings.asset | head -n 1 | awk '{print $2}');
         echo "Extracted GOOGLE_PLAY_PACKAGE_NAME $GOOGLE_PLAY_PACKAGE_NAME";
-      fi
-
-    # Read APK path from artifact
-    - if [ -f "apk_path.txt" ]; then
-        export APK_PATH=$(cat apk_path.txt);
-        echo "APK Path from artifact $APK_PATH";
-      else
-        echo "❌ Error apk_path.txt not found. Cannot proceed with IQA trigger.";
-        exit 1;
       fi
 
     # Construct APK URL (assuming APK is accessible via HTTP)
