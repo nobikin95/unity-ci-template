@@ -859,7 +859,7 @@ trigger_iqa:
 
   # ✅ Add dependency on build_apk_by_tag to ensure APK is built first
   needs:
-    - job: build_apk_by_tag
+    - job: build_self_test
       artifacts: true  # Download artifacts: apk_path.txt, build_output.log
 
   retry:
