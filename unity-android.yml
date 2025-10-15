@@ -902,6 +902,18 @@ build_self_test:
         exit 1;
       fi
 
+    # Copy APK to storage directory and save path for trigger_iqa
+    - echo "Copying APK to storage directory..."
+    - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/APK/"
+    - mkdir -p "${STORAGE_PATH}"
+    - echo "Clearing old data in ${STORAGE_PATH}..."
+    - chmod -R 775 "${STORAGE_PATH}" || echo "Permission issue, proceeding..."
+    - find "${STORAGE_PATH}" -type f -delete || echo "No files to delete, proceeding..."
+    - cp "Build/Android/${APK_NAME}" "${STORAGE_PATH}/"
+    - echo "${STORAGE_PATH}/${APK_NAME}" > apk_path.txt
+    - echo "✅ APK copied to ${STORAGE_PATH}"
+    - echo "✅ APK path saved to apk_path.txt ${STORAGE_PATH}/${APK_NAME}"
+
     - echo "Preparing to upload APK..."
     - if [ -f "Build/Android/${APK_NAME}" ]; then
         echo "Uploading APK...";
