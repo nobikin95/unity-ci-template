@@ -856,6 +856,12 @@ upload_internal:
 trigger_iqa:
   stage: qa_automation
   resource_group: "${CI_PROJECT_ID}"
+
+  # ✅ Add dependency on build_apk_by_tag to ensure APK is built first
+  needs:
+    - job: build_apk_by_tag
+      artifacts: true  # Download artifacts: apk_path.txt, build_output.log
+
   retry:
     max: 2
     when:
@@ -863,47 +869,218 @@ trigger_iqa:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
+
   rules:
     - if: '$CI_COMMIT_TAG =~ /^develop\/ver_/'
       when: on_success
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
-  timeout: 5m
-  script:
-    - echo "🚀 Starting IQA Trigger Job..."
-    - echo "📅 Timestamp $(date '+%Y-%m-%d %H:%M:%S')"
 
-    # Extract package name from ProjectSettings
-    - if [ -z "$GOOGLE_PLAY_PACKAGE_NAME" ]; then
-        echo "GOOGLE_PLAY_PACKAGE_NAME is not set. Extracting from ProjectSettings/ProjectSettings.asset...";
-        export GOOGLE_PLAY_PACKAGE_NAME=$(grep "Android:" ProjectSettings/ProjectSettings.asset | head -n 1 | awk '{print $2}');
-        echo "Extracted GOOGLE_PLAY_PACKAGE_NAME $GOOGLE_PLAY_PACKAGE_NAME";
+  timeout: 10m  # Increased timeout for GCS upload
+
+  before_script:
+    - echo "� Setting up GCP authentication..."
+
+    # Verify GCP_SA_KEY_BASE64 variable exists
+    - |
+      if [ -z "$GCP_SA_KEY_BASE64" ]; then
+        echo "❌ Error: GCP_SA_KEY_BASE64 is not set"
+        echo "Please set this variable in GitLab CI/CD Settings → Variables"
+        echo "See SETUP_GCP_VARIABLE.md for instructions"
+        exit 1
       fi
 
-    # Construct APK URL (assuming APK is accessible via HTTP)
-    # You may need to adjust this based on your actual file server configuration
-    - export APK_FILENAME="Screwdom3D_v7.0.46.apk"
-    - export CI_COMMIT_SHORT_SHA="6ed6ab97f8f777cdff6c41ac6502ebb2fdf171a0"
-    - export CI_COMMIT_TITLE="Test QA Automation"
-    - export APK_URL="https://storage.googleapis.com/ikame-games-build-storage/Screwdom3D_v7.0.46.apk"
-    - echo "APK URL $APK_URL"
+    # Decode Service Account JSON key
+    - echo "$GCP_SA_KEY_BASE64" | base64 --decode > gcp_sa_key.json
+    - echo "✅ Service Account key decoded"
 
-    # Prepare JSON payload
+    # Verify JSON format
+    - |
+      if command -v jq &> /dev/null; then
+        if jq empty gcp_sa_key.json 2>/dev/null; then
+          echo "✅ Valid JSON format"
+          SA_EMAIL=$(jq -r '.client_email' gcp_sa_key.json)
+          echo "✅ Service Account: $SA_EMAIL"
+        else
+          echo "❌ Invalid JSON format"
+          exit 1
+        fi
+      else
+        echo "⚠️ jq not found, skipping JSON validation"
+      fi
+
+    # Check if gcloud CLI is available
+    - |
+      if command -v gcloud &> /dev/null; then
+        echo "✅ gcloud CLI found: $(gcloud version | head -n 1)"
+        export USE_GCLOUD=true
+
+        # Authenticate with Service Account
+        gcloud auth activate-service-account --key-file=gcp_sa_key.json
+        echo "✅ Authenticated with Service Account"
+
+        # Verify authentication
+        gcloud auth list
+      else
+        echo "⚠️ gcloud CLI not found, will use curl method"
+        export USE_GCLOUD=false
+      fi
+
+  script:
+    - echo "🚀 Starting IQA Trigger Job with GCS Upload..."
+    - echo "📅 Timestamp $(date '+%Y-%m-%d %H:%M:%S')"
+    - echo "🏷️ Tag $CI_COMMIT_TAG"
+    - echo "📦 Project $PROJECT_NAME"
+
+    # ========================================================================
+    # STEP 1: Read APK Path from Artifacts
+    # ========================================================================
+    - echo ""
+    - echo "� STEP 1 Reading APK path from artifacts..."
+    - |
+      if [ -f "apk_path.txt" ]; then
+        export APK_LOCAL_PATH=$(cat apk_path.txt)
+        echo "✅ APK Path from artifacts: $APK_LOCAL_PATH"
+      else
+        echo "❌ apk_path.txt not found in artifacts!"
+        echo "Available files:"
+        ls -la
+        exit 1
+      fi
+
+    # Verify APK file exists
+    - |
+      if [ ! -f "$APK_LOCAL_PATH" ]; then
+        echo "❌ APK file not found at: $APK_LOCAL_PATH"
+        exit 1
+      fi
+
+    - export APK_FILENAME=$(basename "$APK_LOCAL_PATH")
+    - export APK_SIZE=$(du -h "$APK_LOCAL_PATH" | cut -f1)
+    - echo "✅ APK Filename $APK_FILENAME"
+    - echo "✅ APK Size $APK_SIZE"
+
+    # ========================================================================
+    # STEP 2: Upload APK to GCP Cloud Storage
+    # ========================================================================
+    - echo ""
+    - echo "☁️ STEP 2 Uploading APK to GCP Cloud Storage..."
+
+    # Set GCS bucket and path
+    - export GCS_BUCKET="ikame-games-build-storage"
+    - export GCS_FOLDER="${PROJECT_NAME}"
+    - export GCS_PATH="gs://${GCS_BUCKET}/${GCS_FOLDER}/${APK_FILENAME}"
+    - echo "📍 GCS Destination $GCS_PATH"
+
+    # Upload using gcloud or curl based on availability
+    - |
+      if [ "$USE_GCLOUD" = "true" ]; then
+        echo "⬆️ Uploading using gcloud storage cp..."
+        gcloud storage cp "$APK_LOCAL_PATH" "$GCS_PATH" \
+          --cache-control="public, max-age=3600" \
+          --content-type="application/vnd.android.package-archive" \
+          2>&1 | tee gcs_upload.log
+
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+          echo "✅ Upload successful!"
+        else
+          echo "❌ Upload failed!"
+          cat gcs_upload.log
+          exit 1
+        fi
+      else
+        echo "⬆️ Uploading using curl (GCS JSON API)..."
+        # This is a fallback method - implementation in after_script if needed
+        echo "❌ curl method not yet implemented. Please install gcloud CLI on runner."
+        exit 1
+      fi
+
+    # ========================================================================
+    # STEP 3: Make APK Public
+    # ========================================================================
+    - echo ""
+    - echo "🌐 STEP 3 Setting public access..."
+
+    # Make file publicly readable
+    - |
+      if [ "$USE_GCLOUD" = "true" ]; then
+        gcloud storage objects update "$GCS_PATH" \
+          --add-acl-grant=entity=allUsers,role=READER \
+          2>&1 | tee gcs_acl.log
+
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+          echo "✅ Public access granted"
+        else
+          echo "⚠️ Failed to set public access (continuing anyway)"
+          cat gcs_acl.log
+        fi
+      fi
+
+    # ========================================================================
+    # STEP 4: Generate Public URL
+    # ========================================================================
+    - echo ""
+    - echo "🔗 STEP 4 Generating public URL..."
+
+    - export APK_URL="https://storage.googleapis.com/${GCS_BUCKET}/${GCS_FOLDER}/${APK_FILENAME}"
+    - echo "✅ Public URL $APK_URL"
+
+    # Verify URL is accessible
+    - echo "🔍 Verifying URL accessibility..."
+    - |
+      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -I "$APK_URL")
+      echo "HTTP Status Code: $HTTP_CODE"
+
+      if [ "$HTTP_CODE" -eq 200 ]; then
+        echo "✅ URL is publicly accessible"
+      else
+        echo "⚠️ URL returned status code $HTTP_CODE (may need time to propagate)"
+      fi
+
+    # ========================================================================
+    # STEP 5: Extract Package Name
+    # ========================================================================
+    - echo ""
+    - echo "📦 STEP 5 Extracting package name..."
+
+    - |
+      if [ -z "$GOOGLE_PLAY_PACKAGE_NAME" ]; then
+        echo "GOOGLE_PLAY_PACKAGE_NAME is not set. Extracting from ProjectSettings..."
+        export GOOGLE_PLAY_PACKAGE_NAME=$(grep "Android:" ProjectSettings/ProjectSettings.asset | head -n 1 | awk '{print $2}')
+        echo "✅ Extracted GOOGLE_PLAY_PACKAGE_NAME: $GOOGLE_PLAY_PACKAGE_NAME"
+      else
+        echo "✅ GOOGLE_PLAY_PACKAGE_NAME: $GOOGLE_PLAY_PACKAGE_NAME"
+      fi
+
+    # ========================================================================
+    # STEP 6: Prepare IQA Payload
+    # ========================================================================
+    - echo ""
+    - echo "📋 STEP 6 Preparing IQA payload..."
+
     - |
       cat > iqa_payload.json <<EOF
       {
         "urlAPK": "${APK_URL}",
         "packageName": "${GOOGLE_PLAY_PACKAGE_NAME}",
         "commitShortSha": "${CI_COMMIT_SHORT_SHA}",
-        "commitTitle": "${CI_COMMIT_TITLE}"
+        "commitTitle": "${CI_COMMIT_TITLE}",
+        "buildType": "develop",
+        "gcsPath": "${GCS_PATH}",
+        "apkSize": "${APK_SIZE}",
+        "uploadTimestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       }
       EOF
 
     - echo "📋 IQA Payload:"
-    - cat iqa_payload.json
+    - cat iqa_payload.json | jq '.' || cat iqa_payload.json
 
-    # Call IQA API
-    - echo "📡 Calling IQA API..."
+    # ========================================================================
+    # STEP 7: Call IQA API
+    # ========================================================================
+    - echo ""
+    - echo "📡 STEP 7 Calling IQA API..."
+
     - |
       HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
         -H "Content-Type: application/json" \
@@ -923,15 +1100,33 @@ trigger_iqa:
         echo "❌ IQA API call failed with status code $HTTP_CODE"
         echo "Response: $HTTP_BODY"
         echo "⚠️ Continuing pipeline despite IQA trigger failure..."
-        exit 0  # Don't fail the pipeline, just log the error
+        exit 0  # Don't fail the pipeline
       fi
 
-    - echo "✅ IQA Trigger job completed"
+    # ========================================================================
+    # STEP 8: Summary
+    # ========================================================================
+    - echo ""
+    - echo "✅ =========================================="
+    - echo "✅ IQA Trigger Job Completed Successfully"
+    - echo "✅ =========================================="
+    - echo "📦 APK $APK_FILENAME"
+    - echo "📏 Size $APK_SIZE"
+    - echo "☁️ GCS $GCS_PATH"
+    - echo "🔗 URL $APK_URL"
     - echo "📅 Completed at $(date '+%Y-%m-%d %H:%M:%S')"
+    - echo "✅ =========================================="
+
+  after_script:
+    - echo "🧹 Cleaning up sensitive files..."
+    - rm -f gcp_sa_key.json
+    - echo "✅ Cleanup completed"
 
   artifacts:
     paths:
       - iqa_payload.json
+      - gcs_upload.log
+      - gcs_acl.log
     when: always
     expire_in: 1 day
 
