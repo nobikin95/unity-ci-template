@@ -1129,9 +1129,15 @@ trigger_iqa:
   stage: qa_automation
   resource_group: "${CI_PROJECT_ID}"
 
-  # ✅ FIXED: Remove hard dependency, use conditional logic instead
-  # This allows trigger_iqa to run after either build_apk_by_tag OR build_self_test
-  needs: []
+  # ✅ FIXED: Download artifacts from both build jobs (whichever ran)
+  # Using optional: true allows the job to run even if one of the jobs didn't run
+  needs:
+    - job: build_apk_by_tag
+      artifacts: true
+      optional: true
+    - job: build_self_test
+      artifacts: true
+      optional: true
 
   retry:
     max: 2
@@ -1191,6 +1197,12 @@ trigger_iqa:
     # ========================================================================
     - echo ""
     - echo "🔍 STEP 1 __ Detecting build type and APK path..."
+
+    # Debug: List all files in working directory
+    - echo "📂 Files in working directory:"
+    - ls -la
+    - echo ""
+
     - |
       # Check which tag pattern triggered this pipeline
       if [[ "$CI_COMMIT_TAG" =~ ^develop/ver_ ]]; then
@@ -1206,6 +1218,19 @@ trigger_iqa:
 
       echo "📋 Build source: $BUILD_SOURCE"
 
+    # Debug: Check if apk_path.txt exists
+    - echo "🔍 Checking for apk_path.txt..."
+    - |
+      if [ -f "apk_path.txt" ]; then
+        echo "✅ Found apk_path.txt"
+        echo "📄 Content:"
+        cat apk_path.txt
+      else
+        echo "❌ apk_path.txt not found!"
+        echo "🔍 Searching for apk_path.txt in subdirectories..."
+        find . -name "apk_path.txt" -type f 2>/dev/null || echo "No apk_path.txt found anywhere"
+      fi
+
     # Read APK path from artifacts (works for both build jobs)
     - |
       if [ -f "apk_path.txt" ]; then
@@ -1213,8 +1238,11 @@ trigger_iqa:
         echo "✅ APK Path from artifacts: $APK_LOCAL_PATH"
       else
         echo "❌ apk_path.txt not found in artifacts!"
-        echo "Available files:"
+        echo "📂 Available files in current directory:"
         ls -la
+        echo ""
+        echo "🔍 Searching entire working directory:"
+        find . -type f -name "*.txt" 2>/dev/null | head -20
         exit 1
       fi
 
