@@ -5,6 +5,13 @@ variables:
   HASH_FILE: ".important_files_hash"
   GIT_CLEAN_FLAGS: -ffdx -e Library/ -e Temp/
   REDIS_URL: "redis://localhost:6379/0"
+  # Folders to delete before build (newline-separated for best readability)
+  FOLDERS_TO_DELETE: |
+    Assets/_Game/_Level/Level
+    Assets/_Game/_Level/Daily Challenge
+    Assets/_Game/_Level/Level  no curve
+    Assets/_Game/_Level/New_10_Level
+    Assets/3D Arts/Meshes
 
 .common_before_script: &common_before_script
   - export NOTIFY_DEV="U043T5P1G9Z"
@@ -117,29 +124,211 @@ variables:
     fi
 
 .disable_app_binary : &disable_app_binary
-  - echo "Configuring settings for APK build without OBB..."
+  - echo "Configuring settings for APK build - all assets embedded in single APK..."
   - echo "Before modification:"
-  - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
+  - grep "androidSplitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "androidSplitApplicationBinary not found"
   - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
   - |
-    # Set splitApplicationBinary to 0
-    if grep -q "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset; then
-      sed -i 's/\(splitApplicationBinary:\).*/\1 0/' ProjectSettings/ProjectSettings.asset
+    # Set androidSplitApplicationBinary to 0 (no binary splitting)
+    if grep -q "androidSplitApplicationBinary:" ProjectSettings/ProjectSettings.asset; then
+      sed -i 's/\(androidSplitApplicationBinary:\).*/\1 0/' ProjectSettings/ProjectSettings.asset
     else
-      sed -i '/PlayerSettings:/a\  splitApplicationBinary: 0' ProjectSettings/ProjectSettings.asset
+      sed -i '/PlayerSettings:/a\  androidSplitApplicationBinary: 0' ProjectSettings/ProjectSettings.asset
     fi
-    # Set APKExpansionFiles to 0
+    # Set APKExpansionFiles to 0 (no separate OBB files)
     if grep -q "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset; then
       sed -i 's/\(APKExpansionFiles:\).*/\1 0/' ProjectSettings/ProjectSettings.asset
     else
       sed -i '/PlayerSettings:/a\  APKExpansionFiles: 0' ProjectSettings/ProjectSettings.asset
     fi
   - echo "After modification:"
-  - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
+  - grep "androidSplitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "androidSplitApplicationBinary not found"
   - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
 
+# Cấu hình tối ưu cho AAB Internal Testing
+.setup_build_aab_optimized: &setup_build_aab_optimized
+  - echo "🔧 Configuring optimized AAB build settings..."
+  - echo "📋 Current project info:"
+  - echo "   - Unity Version $(grep 'm_EditorVersion:' ProjectSettings/ProjectVersion.txt | awk '{print $2}')"
+  - echo "   - Package $(grep 'Android:' ProjectSettings/ProjectSettings.asset | head -n 1 | awk '{print $2}')"
+
+  # Backup original settings
+  - cp ProjectSettings/ProjectSettings.asset ProjectSettings/ProjectSettings.asset.backup
+  - echo "✅ Backup created ProjectSettings.asset.backup"
+
+  - echo "📊 Before modification:"
+  - grep "androidSplitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "androidSplitApplicationBinary not found"
+  - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
+
+  - |
+    # Function to safely update Unity settings
+    update_unity_setting() {
+      local setting_name="$1"
+      local setting_value="$2"
+      local file_path="ProjectSettings/ProjectSettings.asset"
+
+      echo "🔄 Processing ${setting_name}..."
+
+      if grep -q "${setting_name}:" "$file_path"; then
+        # Update existing setting
+        sed -i "s/\(${setting_name}:\).*/\1 ${setting_value}/" "$file_path"
+        echo "   ✏️  Updated existing ${setting_name} to ${setting_value}"
+      else
+        # Add new setting - find better insertion point
+        if grep -q "androidSplitApplicationBinary:" "$file_path"; then
+          # Insert after androidSplitApplicationBinary line
+          sed -i "/androidSplitApplicationBinary:/a\\  ${setting_name}: ${setting_value}" "$file_path"
+        else
+          # Fallback: insert after PlayerSettings
+          sed -i "/PlayerSettings:/a\\  ${setting_name}: ${setting_value}" "$file_path"
+        fi
+        echo "   ➕ Added new ${setting_name}: ${setting_value}"
+      fi
+
+      # Validate the change
+      if grep -q "${setting_name}: ${setting_value}" "$file_path"; then
+        echo "   ✅ Validation passed: ${setting_name} = ${setting_value}"
+        return 0
+      else
+        echo "   ❌ Validation failed: ${setting_name} not set correctly"
+        return 1
+      fi
+    }
+
+    # OPTION A: All-in-AAB approach (RECOMMENDED for Internal Testing)
+    echo "🎯 Applying OPTION A: All-in-AAB configuration"
+    echo "   - All assets embedded in AAB"
+    echo "   - No separate OBB files"
+    echo "   - Optimal for testing and small-medium apps"
+
+    # Disable split binary (keep everything in AAB)
+    update_unity_setting "androidSplitApplicationBinary" "0" || exit 1
+
+    # Disable APK expansion files (not needed when split=0)
+    update_unity_setting "APKExpansionFiles" "0" || exit 1
+
+  - echo "📊 After modification:"
+  - grep "androidSplitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "androidSplitApplicationBinary not found"
+  - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
+
+  # Final validation
+  - |
+    echo "🔍 Final validation..."
+    if grep -q "androidSplitApplicationBinary: 0" ProjectSettings/ProjectSettings.asset; then
+      echo "✅ androidSplitApplicationBinary correctly set to 0"
+    else
+      echo "❌ CRITICAL: androidSplitApplicationBinary not set to 0"
+      exit 1
+    fi
+
+    if grep -q "APKExpansionFiles: 0" ProjectSettings/ProjectSettings.asset; then
+      echo "✅ APKExpansionFiles correctly set to 0"
+    else
+      echo "❌ CRITICAL: APKExpansionFiles not set to 0"
+      exit 1
+    fi
+
+    echo "🎉 AAB configuration completed successfully!"
+    echo "📦 Build will create: Single AAB file with all assets embedded"
+
+# OBB configuration for large apps (>200MB) - Google Play Console compatible
+.setup_build_with_obb: &setup_build_with_obb
+  - echo "🔧 Configuring AAB build with OBB expansion files..."
+  - echo "🎯 SOLUTION Fixing Google Play Console 200MB base module limit"
+  - echo "📋 This configuration will:"
+  - echo "   - Keep core app < 200MB in AAB base module"
+  - echo "   - Move large assets to separate OBB expansion file"
+  - echo "   - Enable Google Play Console upload compatibility"
+
+  # Backup original settings
+  - cp ProjectSettings/ProjectSettings.asset ProjectSettings/ProjectSettings.asset.backup
+  - echo "✅ Backup created ProjectSettings.asset.backup"
+
+  - echo "📊 Before modification:"
+  - grep "androidSplitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "androidSplitApplicationBinary not found"
+  - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
+
+  - |
+    # Function to safely update Unity settings for OBB
+    update_obb_setting() {
+      local setting_name="$1"
+      local setting_value="$2"
+      local file_path="ProjectSettings/ProjectSettings.asset"
+
+      echo "🔄 Processing ${setting_name} for OBB configuration..."
+
+      if grep -q "${setting_name}:" "$file_path"; then
+        # Update existing setting
+        sed -i "s/\(${setting_name}:\).*/\1 ${setting_value}/" "$file_path"
+        echo "   ✏️  Updated existing ${setting_name} to ${setting_value}"
+      else
+        # Add new setting
+        if grep -q "androidSplitApplicationBinary:" "$file_path"; then
+          sed -i "/androidSplitApplicationBinary:/a\\  ${setting_name}: ${setting_value}" "$file_path"
+        else
+          sed -i "/PlayerSettings:/a\\  ${setting_name}: ${setting_value}" "$file_path"
+        fi
+        echo "   ➕ Added new ${setting_name}: ${setting_value}"
+      fi
+
+      # Validate the change
+      if grep -q "${setting_name}: ${setting_value}" "$file_path"; then
+        echo "   ✅ Validation passed: ${setting_name} = ${setting_value}"
+        return 0
+      else
+        echo "   ❌ Validation failed: ${setting_name} not set correctly"
+        return 1
+      fi
+    }
+
+    echo "🎯 Applying OBB configuration to resolve 200MB limit issue"
+    echo "   - Enable binary splitting (core app + OBB expansion)"
+    echo "   - Large assets will be moved to OBB file"
+    echo "   - Google Play Console will handle OBB distribution automatically"
+
+    # Enable split binary (separate core app from large assets)
+    update_obb_setting "androidSplitApplicationBinary" "1" || exit 1
+
+    # Enable APK expansion files (create OBB for large assets)
+    update_obb_setting "APKExpansionFiles" "1" || exit 1
+
+  - echo "📊 After modification:"
+  - grep "androidSplitApplicationBinary:" ProjectSettings/ProjectSettings.asset
+  - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset
+
+  # Final validation for OBB configuration
+  - |
+    echo "🔍 Final validation for OBB configuration..."
+    validation_passed=true
+
+    if grep -q "androidSplitApplicationBinary: 1" ProjectSettings/ProjectSettings.asset; then
+      echo "✅ androidSplitApplicationBinary correctly set to 1 (binary splitting enabled)"
+    else
+      echo "❌ CRITICAL: androidSplitApplicationBinary not set to 1"
+      validation_passed=false
+    fi
+
+    if grep -q "APKExpansionFiles: 1" ProjectSettings/ProjectSettings.asset; then
+      echo "✅ APKExpansionFiles correctly set to 1 (OBB expansion enabled)"
+    else
+      echo "❌ CRITICAL: APKExpansionFiles not set to 1"
+      validation_passed=false
+    fi
+
+    if [ "$validation_passed" = true ]; then
+      echo "🎉 OBB configuration completed successfully!"
+      echo "📦 Build will create: AAB (core app < 200MB) + OBB (large assets)"
+      echo "🚀 Google Play Console will accept and distribute both files automatically"
+      echo "📱 Users will download core app first, then OBB as needed"
+    else
+      echo "💥 OBB configuration failed - exiting"
+      exit 1
+    fi
+
+# Legacy OBB configuration (kept for reference)
 .setup_build_obb: &setup_build_obb
-  - echo "Configuring settings for AAB build with OBB..."
+  - echo "⚠️  LEGACY Configuring settings for AAB build with OBB..."
+  - echo "📋 Note This configuration has compatibility issues"
   - echo "Before modification:"
   - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
   - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
@@ -160,6 +349,28 @@ variables:
   - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
   - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
 
+.setup_screwdom: &setup_screwdom
+  # --- 1: Build Addressables ---
+  - echo "Step 2__ Building Addressables for Android..."
+  - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -buildTarget Android -executeMethod BuildScript.BuildAddressables -logFile $CI_PROJECT_DIR/addressables_build_log.txt
+
+  # --- 1a: Deleting folders before build ---
+  - echo "Step 3a ... Deleting folders before build..."
+  - chmod +x Assets/cicd/ci/delete_folders.sh
+  - Assets/cicd/ci/delete_folders.sh
+  # --- 2: Resolve Packages---
+  - echo "Resolving packages..."
+  - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -executeMethod BuildScript.ResolvePackage -logFile $CI_PROJECT_DIR/resolve_log.txt -quit || {
+      echo "Error>> Package Manager resolve failed.";
+    }
+
+  # Remove com.unity.ads from manifest.json
+  - sed -i '/"com.unity.ads"/d' Packages/manifest.json
+  # Backup the original file
+  - cp Packages/packages-lock.json Packages/packages-lock.json.bak
+  # Remove "com.unity.ads" from dependencies
+  - jq 'del(.dependencies["com.unity.ads"])' Packages/packages-lock.json > tmp.json && mv tmp.json Packages/packages-lock.json
+   
 build_apk_and_verify:
   stage: verify
   resource_group: "global_verify_apk"
@@ -177,6 +388,7 @@ build_apk_and_verify:
     - export BUILD_TYPE="📱APK"
     - export VERSION_INFO="${APK_VERSION}"
     - *common_before_script
+    - *disable_app_binary
     - chmod +x Assets/cicd/ci/wait-for-resource.sh Assets/cicd/ci/release-resource.sh
     - Assets/cicd/ci/wait-for-resource.sh "global_verify_apk"
   timeout: 35m
@@ -230,6 +442,10 @@ build_apk_and_verify:
     - touch $CI_PROJECT_DIR/build_output.log
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
     - start=$(date +%s)
+
+    - *setup_screwdom
+    # --- 3: Build APK ---
+    - echo "Step 3__ Building Android APK..."
     - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
         echo "Error... Unity build failed.";
         send_build_failure_notification
@@ -319,6 +535,7 @@ build_aab:
     - export VERSION_INFO="bundle_${AAB_VERSION}_version_${APK_VERSION}"
     - *common_before_script
     - *send_notify_dev
+    - *setup_build_with_obb  # Chuyển sang OBB để giải quyết lỗi 200MB limit
     - chmod +x Assets/cicd/ci/wait-for-resource.sh Assets/cicd/ci/release-resource.sh
     - Assets/cicd/ci/wait-for-resource.sh "global_build_aab"
   timeout: 40m
@@ -386,6 +603,7 @@ build_aab:
     - echo "Updated AndroidBundleVersionCode in ProjectSettings.asset to $AAB_VERSION"
     - grep "AndroidBundleVersionCode:" ProjectSettings/ProjectSettings.asset
 
+    - *setup_screwdom
     # Build AAB
     - mkdir -p Build/Android;
     - export AAB_NAME="${PROJECT_NAME}_bundle_${AAB_VERSION}_version_${CURRENT_VERSION}.aab";
@@ -408,21 +626,41 @@ build_aab:
         echo "AAB build succeeded.";
       fi
 
-    - echo "Copying AAB and symbols file to storage directory..."
+    - echo "Copying AAB, OBB, and symbols files to storage directory..."
     - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/AAB/"
     - mkdir -p "${STORAGE_PATH}"
     - echo "Clearing old data in ${STORAGE_PATH}..."
     - chmod -R 775 "${STORAGE_PATH}"
     - find "${STORAGE_PATH}" -type f -delete || echo "No files to delete or permission issue, proceeding..."
+
+    # Copy AAB file
     - cp "Build/Android/${AAB_NAME}" "${STORAGE_PATH}/"
-    - echo "AAB copied to ${STORAGE_PATH}"
+    - echo "✅ AAB copied to ${STORAGE_PATH}"
     - echo "${STORAGE_PATH}/${AAB_NAME}" > aab_path.txt
+
+    # Copy OBB files if they exist (for OBB configuration)
+    - |
+      obb_files=$(find Build/Android -name "*.obb" 2>/dev/null || true)
+      if [ -n "$obb_files" ]; then
+        echo "📦 Found OBB files - copying to storage..."
+        echo "$obb_files" | while read obb_file; do
+          if [ -f "$obb_file" ]; then
+            cp "$obb_file" "${STORAGE_PATH}/"
+            echo "✅ OBB file copied: $(basename "$obb_file")"
+          fi
+        done
+        echo "📋 OBB files will be automatically handled by Google Play Console"
+      else
+        echo "📋 No OBB files found (all assets embedded in AAB)"
+      fi
+
+    # Copy symbols file
     - symbols_file=$(find Build/Android -name "*.symbols.zip" | head -n 1)
-    - if [ -n "$symbols_file" ]; then 
+    - if [ -n "$symbols_file" ]; then
         cp "$symbols_file" "${STORAGE_PATH}/";
-        echo "Symbols file copied to ${STORAGE_PATH}";
-      else 
-        echo "No symbols file found to copy.";
+        echo "✅ Symbols file copied to ${STORAGE_PATH}";
+      else
+        echo "📋 No symbols file found to copy.";
       fi
 
     - export PATCH_VERSION=0
@@ -442,6 +680,7 @@ build_aab:
     paths:
       - build_output.log
       - changelog.txt
+      - addressables_build_log.txt
     when: always  
     expire_in: 1 day  
 
@@ -460,6 +699,7 @@ build_apk_by_tag:
     - export VERSION_INFO="${APK_VERSION}"
     - *common_before_script
     - *send_notify_dev
+    - *disable_app_binary
   timeout: 30m
   rules:
     - if: '$CI_COMMIT_TAG =~ /^develop\/ver_/'
@@ -493,6 +733,11 @@ build_apk_by_tag:
     - touch $CI_PROJECT_DIR/build_output.log
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
     - start=$(date +%s)
+
+    - *setup_screwdom
+    
+    # --- 3: Build APK ---
+    - echo "Step 3__ Building Android APK..."
     - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
         send_build_failure_notification
         exit 1;
@@ -565,6 +810,7 @@ build_apk_by_tag:
     paths:
       - build_output.log
       - apk_path.txt
+      - addressables_build_log.txt
     when: always
     expire_in: 1 day
 
@@ -583,6 +829,7 @@ build_self_test:
     - export BUILD_TYPE="📱APK_SelfTest"
     - export VERSION_INFO="${APK_VERSION}"
     - *common_before_script
+    - *disable_app_binary
   timeout: 30m
   rules:
     - if: '$CI_COMMIT_TAG =~ /^self_test(_[A-Z0-9]+)?$/'
@@ -617,6 +864,10 @@ build_self_test:
     - export NOTIFY_DEV=${MAIN_DEV}
     - *send_notify_dev
 
+    - *setup_screwdom
+
+    # --- 3: Build APK ---
+    - echo "Step 3__ Building Android APK..."
     - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
         send_build_failure_notification
         exit 1;
@@ -665,6 +916,7 @@ build_self_test:
     paths:
       - build_output.log
       - apk_path.txt
+      - addressables_build_log.txt
     when: always
     expire_in: 1 day
 
@@ -676,6 +928,7 @@ check_build_failure:
     - export BUILD_TYPE="📱Check_Build_Daily"
     - export VERSION_INFO="${APK_VERSION}"
     - *common_before_script
+    - *disable_app_binary
   timeout: 10m
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
@@ -688,6 +941,11 @@ check_build_failure:
     - touch $CI_PROJECT_DIR/build_output.log
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
     - start=$(date +%s)
+    
+    - *setup_screwdom
+    
+    # --- 3: Build APK ---
+    - echo "Step 3__ Building Android APK..."
     - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
         python3 Assets/cicd/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "?? Daily Build Failed... CI/CD detected a build failure during the daily build check." "$SLACK_BOT_TOKEN" "? Please review the pipeline logs and address the issue. ???? Job Details... $CI_JOB_URL";
         exit 1;
@@ -740,6 +998,8 @@ upload_internal:
   rules:
     - if: '$CI_COMMIT_TAG =~ /^release\/bundle.*$/'
       when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   script:
     - echo "Starting upload_internal job..."
     - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/AAB/"
