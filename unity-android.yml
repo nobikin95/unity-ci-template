@@ -7,8 +7,6 @@ variables:
   REDIS_URL: "redis://localhost:6379/0"
 
 .common_before_script: &common_before_script
-  - export NOTIFY_DEV="U043T5P1G9Z"
-  - export SLACK_USER_IDS="C07UU3A6H0R"
   - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
   - git submodule update --init --recursive --checkout
