@@ -1142,7 +1142,9 @@ trigger_iqa:
     - job: build_apk_and_verify
       artifacts: true
       optional: true
-
+    - job: build_self_test
+      artifacts: true
+      optional: true
   retry:
     max: 2
     when:
