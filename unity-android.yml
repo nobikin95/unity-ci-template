@@ -1363,6 +1363,7 @@ trigger_iqa:
         "buildType": "${BUILD_SOURCE}",
         "gcsPath": "${GCS_PATH}",
         "apkSize": "${APK_SIZE}",
+        "channelId": "${SLACK_CHANNEL_ID}",
         "uploadTimestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       }
       EOF
