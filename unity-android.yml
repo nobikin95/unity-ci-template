@@ -1135,13 +1135,11 @@ trigger_iqa:
   stage: qa_automation
   resource_group: "${CI_PROJECT_ID}"
 
-  # ✅ FIXED: Download artifacts from both build jobs (whichever ran)
-  # Using optional: true allows the job to run even if one of the jobs didn't run
   needs:
     - job: build_apk_by_tag
       artifacts: true
       optional: true
-    - job: build_self_test
+    - job: build_apk_and_verify
       artifacts: true
       optional: true
 
