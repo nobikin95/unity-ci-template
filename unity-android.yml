@@ -301,7 +301,148 @@ build_apk_and_verify:
     - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
   after_script:
     - Assets/cicd/ci/release-resource.sh "global_verify_apk"
-  
+
+
+build_apk_and_verify_manual:
+  stage: verify
+  resource_group: "global_verify_apk"
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+      - script_failure
+  needs: []
+  before_script:
+    - export BUILD_TYPE="📱APK"
+    - export VERSION_INFO="${APK_VERSION}"
+    - *common_before_script
+    - chmod +x Assets/cicd/ci/wait-for-resource.sh Assets/cicd/ci/release-resource.sh
+    - Assets/cicd/ci/wait-for-resource.sh "global_verify_apk"
+  timeout: 35m
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  script:
+    # Update Scripting Symbol
+    - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
+    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
+
+    # Resolve packages to generate Library/PackageCache
+    - echo "Resolving Unity packages to generate Library/PackageCache..."
+    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve || echo "Package resolution completed with warnings"
+
+    # Patch Adjust.cs to insert VERIFY_TOKEN block before 'if (!this.startManually)'
+    - |
+      echo "Patching Adjust.cs with VERIFY_TOKEN block...";
+      ADJUST_CS=$(find Library/PackageCache -path "*/com.adjust.sdk@*/Scripts/Adjust.cs" | head -n 1);
+      if [ -z "$ADJUST_CS" ]; then
+        echo "Adjust.cs not found in Library/PackageCache. Skipping patch.";
+      else
+        echo "Found Adjust.cs at $ADJUST_CS";
+        if grep -q "#if VERIFY_TOKEN" "$ADJUST_CS"; then
+          echo "VERIFY_TOKEN block already present. Skipping insertion.";
+        else
+          awk '
+          BEGIN { inserted=0 }
+          {
+            if (!inserted && $0 ~ /if \(!this\.startManually\)/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "this.environment = AdjustEnvironment.Sandbox;";
+              print indent "this.logLevel = AdjustLogLevel.Verbose;";
+              print "#else";
+              print indent "this.environment = AdjustEnvironment.Production;";
+              print indent "this.logLevel = AdjustLogLevel.Error;";
+              print "#endif";
+              inserted=1;
+            }
+            print $0;
+          }' "$ADJUST_CS" > "$ADJUST_CS.tmp" && mv "$ADJUST_CS.tmp" "$ADJUST_CS";
+        fi
+      fi
+
+    - mkdir -p Build/Android;
+    - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
+    - echo "$APK_NAME" > apk_name.txt
+    - echo "APK_NAME ${APK_NAME}";
+    - touch $CI_PROJECT_DIR/build_output.log
+    - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
+    - start=$(date +%s)
+    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
+        echo "Error... Unity build failed.";
+        send_build_failure_notification
+        exit 1;
+      }
+    - end=$(date +%s)
+    - echo "Time taken... $((end-start)) seconds"
+    - echo "Checking APK and directory contents after build..."
+    - ls -l Build/Android/
+    - if [ ! -f "Build/Android/${APK_NAME}" ]; then
+        echo "Error... APK file not found. Build failed.";
+        send_build_failure_notification
+        exit 1;
+      else
+        echo "APK build succeeded.";
+      fi
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+        echo "⚠ Check ProjectSettings.asset AndroidTargetArchitectures setting";
+        echo "⚠ Expected value: 7 (ARMv7 + ARM64 + x86_64)";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
+
+    - echo "Copying APK to storage directory..."
+    - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/APK/"
+    - mkdir -p "${STORAGE_PATH}"
+    - echo "Clearing old data in ${STORAGE_PATH}..."
+    - chmod -R 775 "${STORAGE_PATH}"
+    - find "${STORAGE_PATH}" -type f -delete || echo "No files to delete or permission issue, proceeding..."
+    - cp "Build/Android/${APK_NAME}" "${STORAGE_PATH}/"
+    - echo "${STORAGE_PATH}/${APK_NAME}" > apk_path.txt
+    - echo "APK copied to ${STORAGE_PATH}"
+
+    - if [ -z "$GOOGLE_PLAY_PACKAGE_NAME" ]; then
+        echo "GOOGLE_PLAY_PACKAGE_NAME is not set. Extracting from ProjectSettings/ProjectSettings.asset...";
+        export GOOGLE_PLAY_PACKAGE_NAME=$(grep "Android:" ProjectSettings/ProjectSettings.asset | head -n 1 | awk '{print $2}');
+        echo "Extracted GOOGLE_PLAY_PACKAGE_NAME $GOOGLE_PLAY_PACKAGE_NAME";
+      fi
+
+    - chmod +x Assets/cicd/ci/start_emulator_check_token.py
+    - Assets/cicd/ci/start_emulator_check_token.py apkPath=${STORAGE_PATH}/${APK_NAME} appPackage=$GOOGLE_PLAY_PACKAGE_NAME
+
+    # Update APK_VERSION in GitLab CI/CD Variables
+    - echo "Updating APK_VERSION in GitLab CI/CD Variables..."
+
+    # Increase PATCH version for each build on the develop branch
+    - export PATCH_VERSION=$((PATCH_VERSION + 1))
+
+    # Construct the new version in MAJOR.MINOR.PATCH format
+    - export NEW_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
+    - echo "Building with new version $NEW_VERSION"
+
+    - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
+  after_script:
+    - Assets/cicd/ci/release-resource.sh "global_verify_apk"
+
 
 build_aab:
   stage: build_aab
