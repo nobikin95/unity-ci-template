@@ -367,6 +367,50 @@ build_apk_and_verify_manual:
         fi
       fi
 
+    # Patch ZegoAdjust.cs to force Sandbox environment and Verbose logging for token verification
+    - |
+      echo "Patching ZegoAdjust.cs with VERIFY_TOKEN block...";
+      ZEGO_ADJUST_CS=$(find Assets -name "ZegoAdjust.cs" -type f | head -n 1);
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Assets. Skipping patch.";
+      else
+        echo "Found ZegoAdjust.cs at $ZEGO_ADJUST_CS";
+        if grep -q "#if VERIFY_TOKEN" "$ZEGO_ADJUST_CS"; then
+          echo "VERIFY_TOKEN block already present in ZegoAdjust.cs. Skipping insertion.";
+        else
+          awk '
+          BEGIN { inserted=0 }
+          {
+            # Insert VERIFY_TOKEN block before "AdjustSdk.AdjustConfig adjustConfig = new AdjustSdk.AdjustConfig"
+            if (!inserted && $0 ~ /AdjustSdk\.AdjustConfig adjustConfig = new AdjustSdk\.AdjustConfig/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print $0;
+              print "";
+              print "#if VERIFY_TOKEN";
+              print indent "// Force Sandbox environment and Verbose logging for token verification";
+              print indent "Environment = AdjustEnvironment.Sandbox;";
+              print "#endif";
+              inserted=1;
+              next;
+            }
+            # Replace the LogLevel assignment to use VERIFY_TOKEN
+            if ($0 ~ /adjustConfig\.LogLevel = AdjustLogLevel\.Error;/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "adjustConfig.LogLevel = AdjustLogLevel.Verbose;";
+              print "#else";
+              print indent "adjustConfig.LogLevel = AdjustLogLevel.Error;";
+              print "#endif";
+              next;
+            }
+            print $0;
+          }' "$ZEGO_ADJUST_CS" > "$ZEGO_ADJUST_CS.tmp" && mv "$ZEGO_ADJUST_CS.tmp" "$ZEGO_ADJUST_CS";
+          echo "ZegoAdjust.cs patched successfully.";
+        fi
+      fi
+
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
     - echo "$APK_NAME" > apk_name.txt
