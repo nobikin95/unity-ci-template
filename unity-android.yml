@@ -393,16 +393,16 @@ build_apk_and_verify_manual:
           awk '
           BEGIN { inserted=0 }
           {
-            # Insert VERIFY_TOKEN block before "AdjustSdk.AdjustConfig adjustConfig = new AdjustSdk.AdjustConfig"
+            # Insert VERIFY_TOKEN block BEFORE "AdjustSdk.AdjustConfig adjustConfig = new AdjustSdk.AdjustConfig"
             if (!inserted && $0 ~ /AdjustSdk\.AdjustConfig adjustConfig = new AdjustSdk\.AdjustConfig/) {
               match($0, /^[[:space:]]*/);
               indent=substr($0, RSTART, RLENGTH);
-              print $0;
-              print "";
               print "#if VERIFY_TOKEN";
               print indent "// Force Sandbox environment and Verbose logging for token verification";
               print indent "Environment = AdjustEnvironment.Sandbox;";
               print "#endif";
+              print "";
+              print $0;
               inserted=1;
               next;
             }
