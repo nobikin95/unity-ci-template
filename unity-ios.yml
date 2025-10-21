@@ -421,11 +421,11 @@ build_ios_release:
 
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
-    
+
     # Check and create workspace if needed
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
-    
+
     - | # Use block scalar for the entire multi-line if/then/else/fi block
       if [ -d "Unity-iPhone.xcworkspace" ]; then
         echo "Found Xcode workspace. Building with xcodebuild...";
@@ -446,6 +446,11 @@ build_ios_release:
         if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
            handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
         fi
+
+        # 🔧 FIX: Refresh Keychain session before export to prevent "Failed to Use Accounts" error
+        echo "🔑 Refreshing Keychain session for export..."
+        security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
+
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
           -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
@@ -474,6 +479,11 @@ build_ios_release:
         if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
            handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
         fi
+
+        # 🔧 FIX: Refresh Keychain session before export to prevent "Failed to Use Accounts" error
+        echo "🔑 Refreshing Keychain session for export..."
+        security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
+
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
           -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
@@ -596,11 +606,11 @@ build_ios_ipa:
 
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
-    
+
     # Check and create workspace if needed
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
-    
+
     - | # Use block scalar for multi-line if statement
       if [ -d "Unity-iPhone.xcworkspace" ]; then
         echo "Found Xcode workspace. Building with xcodebuild...";
@@ -622,6 +632,10 @@ build_ios_ipa:
         if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
           handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
         fi
+
+        # 🔧 FIX: Refresh Keychain session before export to prevent "Failed to Use Accounts" error
+        echo "🔑 Refreshing Keychain session for export..."
+        security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
 
         # Simple export with automatic signing
         echo "🎯 Exporting with automatic signing..."
@@ -673,6 +687,10 @@ build_ios_ipa:
         if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
           handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
         fi
+
+        # 🔧 FIX: Refresh Keychain session before export to prevent "Failed to Use Accounts" error
+        echo "🔑 Refreshing Keychain session for export..."
+        security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
 
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Dev" \
