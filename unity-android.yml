@@ -169,8 +169,9 @@ build_apk_and_verify:
       - api_failure
       - unknown_failure
       - script_failure
-  dependencies:
-    - upload_internal
+  needs:
+    - job: upload_internal
+      optional: true
   before_script:
     - export BUILD_TYPE="📱APK"
     - export VERSION_INFO="${APK_VERSION}"
