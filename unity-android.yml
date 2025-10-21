@@ -316,6 +316,8 @@ build_apk_and_verify_manual:
       - script_failure
   needs: []
   before_script:
+    - export NOTIFY_DEV="U043T5P1G9Z"
+    - export SLACK_CHANNEL_ID="C07UU3A6H0R"
     - export BUILD_TYPE="📱APK"
     - export VERSION_INFO="${APK_VERSION}"
     - *common_before_script
