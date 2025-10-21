@@ -370,9 +370,17 @@ build_apk_and_verify_manual:
     # Patch ZegoAdjust.cs to force Sandbox environment and Verbose logging for token verification
     - |
       echo "Patching ZegoAdjust.cs with VERIFY_TOKEN block...";
-      ZEGO_ADJUST_CS=$(find Assets -name "ZegoAdjust.cs" -type f | head -n 1);
+      ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Runtime/ZegoAdjust.cs" | head -n 1);
       if [ -z "$ZEGO_ADJUST_CS" ]; then
-        echo "ZegoAdjust.cs not found in Assets. Skipping patch.";
+        echo "ZegoAdjust.cs not found in Library/PackageCache. Trying alternative paths...";
+        ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Scripts/ZegoAdjust.cs" | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Library/PackageCache. Trying Assets...";
+        ZEGO_ADJUST_CS=$(find Assets -name "ZegoAdjust.cs" -type f | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found. Skipping patch.";
       else
         echo "Found ZegoAdjust.cs at $ZEGO_ADJUST_CS";
         if grep -q "#if VERIFY_TOKEN" "$ZEGO_ADJUST_CS"; then
