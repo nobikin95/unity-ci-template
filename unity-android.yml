@@ -423,6 +423,46 @@ build_apk_and_verify_manual:
         fi
       fi
 
+    # Patch mainTemplate.gradle to enable x86_64 libraries for emulator testing
+    - |
+      echo "Patching mainTemplate.gradle to enable x86_64 libraries...";
+      MAIN_TEMPLATE="Assets/Plugins/Android/mainTemplate.gradle";
+      if [ ! -f "$MAIN_TEMPLATE" ]; then
+        echo "mainTemplate.gradle not found at $MAIN_TEMPLATE. Skipping patch.";
+      else
+        echo "Found mainTemplate.gradle at $MAIN_TEMPLATE";
+        if grep -q "^[[:space:]]*exclude '/lib/x86_64/\*\*'" "$MAIN_TEMPLATE"; then
+          echo "Found x86_64 exclusion line. Commenting it out...";
+          sed -i "s|^\([[:space:]]*\)exclude '/lib/x86_64/\*\*'|\1// exclude '/lib/x86_64/**'  // Commented out for emulator testing|" "$MAIN_TEMPLATE";
+          echo "mainTemplate.gradle patched successfully.";
+        elif grep -q "^[[:space:]]*//.*exclude '/lib/x86_64/\*\*'" "$MAIN_TEMPLATE"; then
+          echo "x86_64 exclusion already commented out. Skipping patch.";
+        else
+          echo "x86_64 exclusion line not found. Skipping patch.";
+        fi
+      fi
+
+    # Patch ProjectSettings.asset to enable x86_64 architecture
+    - |
+      echo "Patching ProjectSettings.asset to enable x86_64 architecture...";
+      PROJECT_SETTINGS="ProjectSettings/ProjectSettings.asset";
+      if [ ! -f "$PROJECT_SETTINGS" ]; then
+        echo "ProjectSettings.asset not found at $PROJECT_SETTINGS. Skipping patch.";
+      else
+        echo "Found ProjectSettings.asset at $PROJECT_SETTINGS";
+        if grep -q "AndroidTargetArchitectures: 3" "$PROJECT_SETTINGS"; then
+          echo "Found AndroidTargetArchitectures: 3. Changing to 7...";
+          sed -i 's/AndroidTargetArchitectures: 3/AndroidTargetArchitectures: 7/' "$PROJECT_SETTINGS";
+          echo "ProjectSettings.asset patched successfully.";
+          echo "AndroidTargetArchitectures changed from 3 (ARMv7+ARM64) to 7 (ARMv7+ARM64+x86_64)";
+        elif grep -q "AndroidTargetArchitectures: 7" "$PROJECT_SETTINGS"; then
+          echo "AndroidTargetArchitectures already set to 7. Skipping patch.";
+        else
+          echo "AndroidTargetArchitectures: 3 not found. Current value:";
+          grep "AndroidTargetArchitectures:" "$PROJECT_SETTINGS" || echo "AndroidTargetArchitectures not found in file";
+        fi
+      fi
+
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
     - echo "$APK_NAME" > apk_name.txt
