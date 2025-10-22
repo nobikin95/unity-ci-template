@@ -431,11 +431,11 @@ build_apk_and_verify_manual:
         echo "mainTemplate.gradle not found at $MAIN_TEMPLATE. Skipping patch.";
       else
         echo "Found mainTemplate.gradle at $MAIN_TEMPLATE";
-        if grep -q "^[[:space:]]*exclude '/lib/x86_64/\*\*'" "$MAIN_TEMPLATE"; then
+        if grep -q "^[[:space:]]*exclude[[:space:]]*(['\"]*/lib/x86_64/" "$MAIN_TEMPLATE"; then
           echo "Found x86_64 exclusion line. Commenting it out...";
-          sed -i "s|^\([[:space:]]*\)exclude '/lib/x86_64/\*\*'|\1// exclude '/lib/x86_64/**'  // Commented out for emulator testing|" "$MAIN_TEMPLATE";
+          sed -i "s|^\([[:space:]]*\)exclude[[:space:]]*(['\"]*/lib/x86_64/[^)]*|\1// exclude ('/lib/x86_64/*' + '*')  // Commented out for emulator testing|" "$MAIN_TEMPLATE";
           echo "mainTemplate.gradle patched successfully.";
-        elif grep -q "^[[:space:]]*//.*exclude '/lib/x86_64/\*\*'" "$MAIN_TEMPLATE"; then
+        elif grep -q "^[[:space:]]*//.*exclude.*x86_64" "$MAIN_TEMPLATE"; then
           echo "x86_64 exclusion already commented out. Skipping patch.";
         else
           echo "x86_64 exclusion line not found. Skipping patch.";
@@ -450,16 +450,16 @@ build_apk_and_verify_manual:
         echo "ProjectSettings.asset not found at $PROJECT_SETTINGS. Skipping patch.";
       else
         echo "Found ProjectSettings.asset at $PROJECT_SETTINGS";
-        if grep -q "AndroidTargetArchitectures: 3" "$PROJECT_SETTINGS"; then
-          echo "Found AndroidTargetArchitectures: 3. Changing to 7...";
-          sed -i 's/AndroidTargetArchitectures: 3/AndroidTargetArchitectures: 7/' "$PROJECT_SETTINGS";
-          echo "ProjectSettings.asset patched successfully.";
-          echo "AndroidTargetArchitectures changed from 3 (ARMv7+ARM64) to 7 (ARMv7+ARM64+x86_64)";
-        elif grep -q "AndroidTargetArchitectures: 7" "$PROJECT_SETTINGS"; then
+        CURRENT_VALUE=$(grep "AndroidTargetArchitectures:" "$PROJECT_SETTINGS" | sed 's/.*AndroidTargetArchitectures: \([0-9]*\).*/\1/');
+        if [ -z "$CURRENT_VALUE" ]; then
+          echo "AndroidTargetArchitectures not found in file. Skipping patch.";
+        elif [ "$CURRENT_VALUE" = "7" ]; then
           echo "AndroidTargetArchitectures already set to 7. Skipping patch.";
         else
-          echo "AndroidTargetArchitectures: 3 not found. Current value:";
-          grep "AndroidTargetArchitectures:" "$PROJECT_SETTINGS" || echo "AndroidTargetArchitectures not found in file";
+          echo "Found AndroidTargetArchitectures: $CURRENT_VALUE. Changing to 7...";
+          sed -i "s/AndroidTargetArchitectures: [0-9]*/AndroidTargetArchitectures: 7/" "$PROJECT_SETTINGS";
+          echo "ProjectSettings.asset patched successfully.";
+          echo "AndroidTargetArchitectures changed from $CURRENT_VALUE to 7 (ARMv7+ARM64+x86_64)";
         fi
       fi
 
