@@ -251,7 +251,9 @@ build_ios_release:
 
           if [[ -n "$MR_DESCRIPTION" && "$MR_DESCRIPTION" != "null" && "$MR_DESCRIPTION" =~ "## Change Log" ]]; then
             echo "Found Change Log section in merge request description."
-            CHANGELOG=$(echo "$MR_DESCRIPTION" | sed -n '/## Change Log/,/## Commits/{/## Commits/q;p}')
+            # Extract changelog between "## Change Log" and next section (starting with ##)
+            # Using awk for better compatibility with both GNU sed (Linux) and BSD sed (macOS)
+            CHANGELOG=$(echo "$MR_DESCRIPTION" | awk '/## Change Log/,/^## [^C]/ {if (/^## [^C]/) exit; print}')
 
             # Get merger info
             MERGER_NAME=$(echo "$MERGE_REQUEST_INFO" | jq -r '.merged_by.name')
