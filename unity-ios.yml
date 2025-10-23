@@ -419,7 +419,7 @@ build_ios_release:
     # Setup Fastlane
     - echo "Setting up Fastlane configuration..."
     - mkdir -p fastlane
-    - cp ci/deploy/Fastfile fastlane/Fastfile
+    - cp Assets/cicd/ci/deploy/Fastfile fastlane/Fastfile
 
     # Verify required environment variables
     - |
