@@ -226,6 +226,8 @@ build_ios_release:
   rules:
     - if: '$CI_COMMIT_TAG =~ /^ios-release\/bundle.*$/'
       when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   script:
     - *common_build_steps
 
@@ -358,12 +360,12 @@ build_ios_release:
         echo "✅ Archive completed successfully"
 
         echo "Exporting archive with automatic signing..."
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
-           handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" ]; then
+           handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
         fi
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
-          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" \
           -allowProvisioningUpdates \
           -quiet \
           > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
@@ -386,12 +388,12 @@ build_ios_release:
         echo "✅ Archive completed successfully"
 
         echo "Exporting archive with automatic signing..."
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" ]; then
            handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
         fi
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
-          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" \
           -allowProvisioningUpdates \
           -quiet \
           > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
