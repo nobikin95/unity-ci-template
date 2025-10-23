@@ -9,93 +9,6 @@ variables:
   - git submodule update --init --recursive --checkout
   - git submodule foreach 'git reset --hard'
   - git submodule foreach 'git clean -fdx'
-  
-  # Setup iOS automatic signing - Simplified version
-  - |
-    echo "🤖 Setting up iOS Automatic Signing..."
-    echo "======================================"
-
-    # Verify required environment variables
-    if [ -z "$IOS_DEVELOPMENT_TEAM" ]; then
-      echo "❌ Error: IOS_DEVELOPMENT_TEAM not set"
-      exit 1
-    fi
-
-    echo "✅ Team ID: $IOS_DEVELOPMENT_TEAM"
-    echo "✅ Bundle ID: com.dino.weapon.backpack"
-    echo "✅ Signing Style: Automatic"
-    echo "✅ Export Method: Ad-Hoc"
-    echo "✅ Using Xcode automatic signing capabilities"
-
-    # Check available certificates for automatic signing
-    CERT_COUNT=$(security find-identity -v -p codesigning | grep -c "iPhone Distribution\|Apple Distribution" 2>/dev/null || echo "0")
-    if [ "$CERT_COUNT" -gt 0 ]; then
-      echo "✅ Found $CERT_COUNT distribution certificate(s) for automatic signing"
-      security find-identity -v -p codesigning | grep "iPhone Distribution\|Apple Distribution" | head -3
-    else
-      echo "⚠️  No distribution certificates found - automatic signing may fail"
-      echo "Available certificates:"
-      security find-identity -v -p codesigning | head -5 || echo "None found"
-      echo ""
-      echo "💡 To fix this:"
-      echo "   1. Install Distribution Certificate manually on GitLab runner"
-      echo "   2. Or add Apple ID credentials for automatic profile management"
-    fi
-
-    # Add Apple ID credentials check for automatic profile creation
-    if [ -n "$APPLE_ID" ] && [ -n "$APPLE_ID_PASSWORD" ]; then
-      echo "✅ Apple ID credentials available for automatic profile management"
-      echo "   Apple ID: $APPLE_ID"
-    else
-      echo "⚠️  Apple ID credentials not set"
-      echo "   For automatic profile creation, add GitLab variables:"
-      echo "   • APPLE_ID: your-apple-id@example.com"
-      echo "   • APPLE_ID_PASSWORD: your-app-specific-password"
-    fi
-
-    # Force refresh Xcode caches
-    echo ""
-    echo "🔄 Refreshing Xcode Caches..."
-    echo "============================="
-
-    # Kill any running Xcode processes
-    killall -9 Xcode 2>/dev/null || true
-    killall -9 xcodebuild 2>/dev/null || true
-
-    # Clear Xcode derived data
-    rm -rf ~/Library/Developer/Xcode/DerivedData/* 2>/dev/null || true
-
-    # Shutdown simulators
-    xcrun simctl shutdown all 2>/dev/null || true
-
-    echo "✅ Xcode caches refreshed"
-
-    # Pre-export validation
-    echo ""
-    echo "🔍 Pre-Export Validation:"
-    echo "========================="
-
-    AVAILABLE_CERTS=$(security find-identity -v -p codesigning | grep -c "iPhone Distribution\|Apple Distribution" 2>/dev/null || echo "0")
-    echo "• Distribution Certificates: $AVAILABLE_CERTS"
-
-    if [ "$AVAILABLE_CERTS" -gt 0 ]; then
-        echo "✅ Prerequisites met for automatic signing export"
-    else
-        echo "⚠️  Missing prerequisites - export may fail"
-    fi
-
-    echo ""
-    echo "🎯 Automatic signing setup completed"
-    echo ""
-    echo "📋 Final Configuration Summary:"
-    echo "=============================="
-    echo "• Export Method: release-testing (Ad-Hoc)"
-    echo "• Signing Style: automatic"
-    echo "• Team ID: $IOS_DEVELOPMENT_TEAM"
-    echo "• Bundle ID: com.dino.weapon.backpack"
-    echo "• Distribution Certificates: $AVAILABLE_CERTS available"
-    echo "• Expected: Xcode will use automatic signing with available certificates"
-
   - echo "Setting up environment for iOS build..."
   - export PROJECT_UNITY_VERSION=$(grep "m_EditorVersion:" ProjectSettings/ProjectVersion.txt | awk '{print $2}')
   - echo "Unity version from ProjectSettings ${PROJECT_UNITY_VERSION}"
@@ -446,11 +359,6 @@ build_ios_release:
         if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
            handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
         fi
-
-        # 🔧 FIX: Refresh Keychain session before export to prevent "Failed to Use Accounts" error
-        echo "🔑 Refreshing Keychain session for export..."
-        security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
-
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
           -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
@@ -479,11 +387,6 @@ build_ios_release:
         if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
            handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
         fi
-
-        # 🔧 FIX: Refresh Keychain session before export to prevent "Failed to Use Accounts" error
-        echo "🔑 Refreshing Keychain session for export..."
-        security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
-
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
           -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
@@ -496,6 +399,62 @@ build_ios_release:
       else
         handle_xcode_error "No Xcode workspace or project found in Build/iOS."
       fi
+
+    # Upload IPA to TestFlight using Fastlane
+    - cd "$CI_PROJECT_DIR"
+    - echo "=================================================="
+    - echo "📤 Uploading IPA to TestFlight using Fastlane..."
+    - echo "=================================================="
+
+    # Verify IPA file exists
+    - |
+      IPA_FILE=$(find Build/iOS/ExportedIPA_Release -name "*.ipa" | head -1)
+      if [ -z "$IPA_FILE" ]; then
+        handle_xcode_error "No IPA file found in Build/iOS/ExportedIPA_Release"
+      fi
+      echo "Found IPA file: $IPA_FILE"
+      IPA_SIZE=$(ls -lh "$IPA_FILE" | awk '{print $5}')
+      echo "IPA file size: $IPA_SIZE"
+
+    # Setup Fastlane
+    - echo "Setting up Fastlane configuration..."
+    - mkdir -p fastlane
+    - cp ci/deploy/Fastfile fastlane/Fastfile
+
+    # Verify required environment variables
+    - |
+      if [ -z "$APP_STORE_KEY_BASE64" ]; then
+        handle_xcode_error "APP_STORE_KEY_BASE64 environment variable is not set"
+      fi
+      if [ -z "$APP_STORE_KEY_ID" ]; then
+        handle_xcode_error "APP_STORE_KEY_ID environment variable is not set"
+      fi
+      if [ -z "$APP_STORE_ISSUER_ID" ]; then
+        handle_xcode_error "APP_STORE_ISSUER_ID environment variable is not set"
+      fi
+      echo "✅ All required environment variables are set"
+      echo "🔍 Debug: APP_STORE_KEY_ID = $APP_STORE_KEY_ID"
+      echo "🔍 Debug: APP_STORE_ISSUER_ID = $APP_STORE_ISSUER_ID"
+      echo "🔍 Debug: APP_STORE_KEY_BASE64 length = ${#APP_STORE_KEY_BASE64}"
+
+    # Export environment variables for Fastlane (explicitly export all required vars)
+    - export APP_STORE_KEY_BASE64="$APP_STORE_KEY_BASE64"
+    - export APP_STORE_KEY_ID="$APP_STORE_KEY_ID"
+    - export APP_STORE_ISSUER_ID="$APP_STORE_ISSUER_ID"
+    - export FASTLANE_SKIP_INTERACTIVE=1
+    - export FASTLANE_HIDE_TIMESTAMP=1
+
+    # Run Fastlane upload
+    - echo "Starting Fastlane upload to TestFlight..."
+    - |
+      if fastlane upload_testflight 2>&1 | tee fastlane_upload.log; then
+        echo "✅ Successfully uploaded IPA to TestFlight!"
+      else
+        echo "❌ Fastlane upload failed. Check fastlane_upload.log for details."
+        tail -n 100 fastlane_upload.log
+        handle_xcode_error "Fastlane upload to TestFlight failed" "fastlane_upload.log"
+      fi
+
     - cd "$CI_PROJECT_DIR"
     - *common_update_version
 
@@ -540,12 +499,54 @@ build_ios_release:
     - python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_message.py" "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
 
   after_script:
+    # Ensure we're in the correct working directory
+    - echo "📍 Ensuring correct working directory..."
+    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - echo "✅ Current directory $(pwd)"
+
+    # Wait for file system sync (important on macOS APFS)
+    - echo "⏳ Waiting for file system sync..."
+    - sleep 3
+    - sync
+
+    # Debug: Display directory structure
+    - echo "🔍 Project directory structure:"
+    - echo "   - CI_PROJECT_DIR $CI_PROJECT_DIR"
+    - echo "   - Current PWD $(pwd)"
+    - echo "   - Disk usage:"
+    - du -sh "$CI_PROJECT_DIR" 2>/dev/null || echo "Cannot calculate size"
+    - |
+      echo "   - Top-level contents:"
+      ls -lah "$CI_PROJECT_DIR" | head -20 || echo "Cannot list directory"
+    - |
+      if [ -d "$CI_PROJECT_DIR/Build/iOS" ]; then
+        echo "   - Build/iOS contents:"
+        ls -lah "$CI_PROJECT_DIR/Build/iOS" | head -20 || echo "Cannot list Build/iOS"
+      else
+        echo "   - Build/iOS directory does not exist"
+      fi
+
+    # Verify external disk
+    - echo ""
     - echo "🔍 Verifying external disk before backup..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
-    - echo "🔧 Starting iOS build backup with enhanced verification..."
+
+    # Start backup process
+    - echo ""
+    - echo "🔧 Starting full project backup with enhanced verification..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
+
+  artifacts:
+    paths:
+      - build_output.log
+      - archive_release.log
+      - export_release.log
+      - fastlane_upload.log
+      - fastlane/
+    when: always
+    expire_in: 1 days
 
 build_ios_ipa:
   stage: build_ios
@@ -633,10 +634,6 @@ build_ios_ipa:
           handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
         fi
 
-        # 🔧 FIX: Refresh Keychain session before export to prevent "Failed to Use Accounts" error
-        echo "🔑 Refreshing Keychain session for export..."
-        security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
-
         # Simple export with automatic signing
         echo "🎯 Exporting with automatic signing..."
         OUTPUT_DIR="$CI_PROJECT_DIR/Build/iOS"
@@ -688,10 +685,6 @@ build_ios_ipa:
           handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
         fi
 
-        # 🔧 FIX: Refresh Keychain session before export to prevent "Failed to Use Accounts" error
-        echo "🔑 Refreshing Keychain session for export..."
-        security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
-
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Dev" \
           -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
@@ -720,9 +713,41 @@ build_ios_ipa:
     - *common_update_version
 
   after_script:
+    # Ensure we're in the correct working directory
+    - echo "📍 Ensuring correct working directory..."
+    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - echo "✅ Current directory $(pwd)"
+
+    # Wait for file system sync (important on macOS APFS)
+    - echo "⏳ Waiting for file system sync..."
+    - sleep 3
+    - sync
+
+    # Debug: Display directory structure
+    - echo "🔍 Project directory structure:"
+    - echo "   - CI_PROJECT_DIR $CI_PROJECT_DIR"
+    - echo "   - Current PWD $(pwd)"
+    - echo "   - Disk usage:"
+    - du -sh "$CI_PROJECT_DIR" 2>/dev/null || echo "Cannot calculate size"
+    - |
+      echo "   - Top-level contents:"
+      ls -lah "$CI_PROJECT_DIR" | head -20 || echo "Cannot list directory"
+    - |
+      if [ -d "$CI_PROJECT_DIR/Build/iOS" ]; then
+        echo "   - Build/iOS contents:"
+        ls -lah "$CI_PROJECT_DIR/Build/iOS" | head -20 || echo "Cannot list Build/iOS"
+      else
+        echo "   - Build/iOS directory does not exist"
+      fi
+
+    # Verify external disk
+    - echo ""
     - echo "🔍 Verifying external disk before backup..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
-    - echo "🔧 Starting iOS build backup with enhanced verification..."
+
+    # Start backup process
+    - echo ""
+    - echo "🔧 Starting full project backup with enhanced verification..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
