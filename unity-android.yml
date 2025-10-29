@@ -310,13 +310,13 @@ build_apk_and_verify:
         CURRENT_VALUE=$(grep "AndroidTargetArchitectures:" "$PROJECT_SETTINGS" | sed 's/.*AndroidTargetArchitectures: \([0-9]*\).*/\1/');
         if [ -z "$CURRENT_VALUE" ]; then
           echo "AndroidTargetArchitectures not found in file. Skipping patch.";
-        elif [ "$CURRENT_VALUE" = "7" ]; then
-          echo "AndroidTargetArchitectures already set to 7. Skipping patch.";
+        elif [ "$CURRENT_VALUE" = "15" ]; then
+          echo "AndroidTargetArchitectures already set to 15. Skipping patch.";
         else
-          echo "Found AndroidTargetArchitectures: $CURRENT_VALUE. Changing to 7...";
-          sed -i "s/AndroidTargetArchitectures: [0-9]*/AndroidTargetArchitectures: 7/" "$PROJECT_SETTINGS";
+          echo "Found AndroidTargetArchitectures: $CURRENT_VALUE. Changing to 15...";
+          sed -i "s/AndroidTargetArchitectures: [0-9]*/AndroidTargetArchitectures: 15/" "$PROJECT_SETTINGS";
           echo "ProjectSettings.asset patched successfully.";
-          echo "AndroidTargetArchitectures changed from $CURRENT_VALUE to 7 (ARMv7+ARM64+x86_64)";
+          echo "AndroidTargetArchitectures changed from $CURRENT_VALUE to 15 (ARMv7+ARM64+x86_64)";
         fi
       fi
 
@@ -354,7 +354,7 @@ build_apk_and_verify:
         echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
         echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
         echo "⚠ Check ProjectSettings.asset AndroidTargetArchitectures setting";
-        echo "⚠ Expected value: 7 (ARMv7 + ARM64 + x86_64)";
+        echo "⚠ Expected value: 15 (ARMv7 + ARM64 + x86_64)";
       fi
     - |
       if grep -q "lib/arm64-v8a/" apk_libs.txt; then
@@ -547,13 +547,13 @@ build_apk_and_verify_manual:
         CURRENT_VALUE=$(grep "AndroidTargetArchitectures:" "$PROJECT_SETTINGS" | sed 's/.*AndroidTargetArchitectures: \([0-9]*\).*/\1/');
         if [ -z "$CURRENT_VALUE" ]; then
           echo "AndroidTargetArchitectures not found in file. Skipping patch.";
-        elif [ "$CURRENT_VALUE" = "7" ]; then
-          echo "AndroidTargetArchitectures already set to 7. Skipping patch.";
+        elif [ "$CURRENT_VALUE" = "15" ]; then
+          echo "AndroidTargetArchitectures already set to 15. Skipping patch.";
         else
-          echo "Found AndroidTargetArchitectures: $CURRENT_VALUE. Changing to 7...";
-          sed -i "s/AndroidTargetArchitectures: [0-9]*/AndroidTargetArchitectures: 7/" "$PROJECT_SETTINGS";
+          echo "Found AndroidTargetArchitectures: $CURRENT_VALUE. Changing to 15...";
+          sed -i "s/AndroidTargetArchitectures: [0-9]*/AndroidTargetArchitectures: 15/" "$PROJECT_SETTINGS";
           echo "ProjectSettings.asset patched successfully.";
-          echo "AndroidTargetArchitectures changed from $CURRENT_VALUE to 7 (ARMv7+ARM64+x86_64)";
+          echo "AndroidTargetArchitectures changed from $CURRENT_VALUE to 15 (ARMv7+ARM64+x86_64)";
         fi
       fi
 
@@ -591,7 +591,7 @@ build_apk_and_verify_manual:
         echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
         echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
         echo "⚠ Check ProjectSettings.asset AndroidTargetArchitectures setting";
-        echo "⚠ Expected value: 7 (ARMv7 + ARM64 + x86_64)";
+        echo "⚠ Expected value: 15 (ARMv7 + ARM64 + x86_64)";
       fi
     - |
       if grep -q "lib/arm64-v8a/" apk_libs.txt; then
