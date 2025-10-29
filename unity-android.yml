@@ -724,6 +724,139 @@ build_aab:
     - echo "Updated AndroidBundleVersionCode in ProjectSettings.asset to $AAB_VERSION"
     - grep "AndroidBundleVersionCode:" ProjectSettings/ProjectSettings.asset
 
+
+    # Resolve packages to generate Library/PackageCache
+    - echo "Resolving Unity packages to generate Library/PackageCache..."
+    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve || echo "Package resolution completed with warnings"
+
+    # Patch Adjust.cs to insert VERIFY_TOKEN block before 'if (!this.startManually)'
+    - |
+      echo "Patching Adjust.cs with VERIFY_TOKEN block...";
+      ADJUST_CS=$(find Library/PackageCache -path "*/com.adjust.sdk@*/Scripts/Adjust.cs" | head -n 1);
+      if [ -z "$ADJUST_CS" ]; then
+        echo "Adjust.cs not found in Library/PackageCache. Skipping patch.";
+      else
+        echo "Found Adjust.cs at $ADJUST_CS";
+        if grep -q "#if VERIFY_TOKEN" "$ADJUST_CS"; then
+          echo "VERIFY_TOKEN block already present. Skipping insertion.";
+        else
+          awk '
+          BEGIN { inserted=0 }
+          {
+            if (!inserted && $0 ~ /if \(!this\.startManually\)/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "this.environment = AdjustEnvironment.Sandbox;";
+              print indent "this.logLevel = AdjustLogLevel.Verbose;";
+              print "#else";
+              print indent "this.environment = AdjustEnvironment.Production;";
+              print indent "this.logLevel = AdjustLogLevel.Error;";
+              print "#endif";
+              inserted=1;
+            }
+            print $0;
+          }' "$ADJUST_CS" > "$ADJUST_CS.tmp" && mv "$ADJUST_CS.tmp" "$ADJUST_CS";
+        fi
+      fi
+
+    # Patch ZegoAdjust.cs to force Sandbox environment and Verbose logging for token verification
+    - |
+      echo "Patching ZegoAdjust.cs with VERIFY_TOKEN block...";
+      ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Runtime/Core/ZegoAdjust.cs" | head -n 1);
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Runtime/Core. Trying Runtime root...";
+        ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Runtime/ZegoAdjust.cs" | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Runtime. Trying Scripts...";
+        ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Scripts/ZegoAdjust.cs" | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Library/PackageCache. Trying Assets...";
+        ZEGO_ADJUST_CS=$(find Assets -name "ZegoAdjust.cs" -type f | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found. Skipping patch.";
+      else
+        echo "Found ZegoAdjust.cs at $ZEGO_ADJUST_CS";
+        if grep -q "#if VERIFY_TOKEN" "$ZEGO_ADJUST_CS"; then
+          echo "VERIFY_TOKEN block already present in ZegoAdjust.cs. Skipping insertion.";
+        else
+          awk '
+          BEGIN { inserted=0 }
+          {
+            # Insert VERIFY_TOKEN block BEFORE "AdjustSdk.AdjustConfig adjustConfig = new AdjustSdk.AdjustConfig"
+            if (!inserted && $0 ~ /AdjustSdk\.AdjustConfig adjustConfig = new AdjustSdk\.AdjustConfig/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "// Force Sandbox environment and Verbose logging for token verification";
+              print indent "Environment = AdjustEnvironment.Sandbox;";
+              print "#endif";
+              print "";
+              print $0;
+              inserted=1;
+              next;
+            }
+            # Replace the LogLevel assignment to use VERIFY_TOKEN
+            if ($0 ~ /adjustConfig\.LogLevel = AdjustLogLevel\.Error;/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "adjustConfig.LogLevel = AdjustLogLevel.Verbose;";
+              print "#else";
+              print indent "adjustConfig.LogLevel = AdjustLogLevel.Error;";
+              print "#endif";
+              next;
+            }
+            print $0;
+          }' "$ZEGO_ADJUST_CS" > "$ZEGO_ADJUST_CS.tmp" && mv "$ZEGO_ADJUST_CS.tmp" "$ZEGO_ADJUST_CS";
+          echo "ZegoAdjust.cs patched successfully.";
+        fi
+      fi
+
+    # Patch mainTemplate.gradle to enable x86_64 libraries for emulator testing
+    - |
+      echo "Patching mainTemplate.gradle to enable x86_64 libraries...";
+      MAIN_TEMPLATE="Assets/Plugins/Android/mainTemplate.gradle";
+      if [ ! -f "$MAIN_TEMPLATE" ]; then
+        echo "mainTemplate.gradle not found at $MAIN_TEMPLATE. Skipping patch.";
+      else
+        echo "Found mainTemplate.gradle at $MAIN_TEMPLATE";
+        if grep -q "^[[:space:]]*exclude[[:space:]]*(['\"]*/lib/x86_64/" "$MAIN_TEMPLATE"; then
+          echo "Found x86_64 exclusion line. Commenting it out...";
+          sed -i "s|^\([[:space:]]*\)exclude[[:space:]]*(['\"]*/lib/x86_64/[^)]*|\1// exclude ('/lib/x86_64/*' + '*')  // Commented out for emulator testing|" "$MAIN_TEMPLATE";
+          echo "mainTemplate.gradle patched successfully.";
+        elif grep -q "^[[:space:]]*//.*exclude.*x86_64" "$MAIN_TEMPLATE"; then
+          echo "x86_64 exclusion already commented out. Skipping patch.";
+        else
+          echo "x86_64 exclusion line not found. Skipping patch.";
+        fi
+      fi
+
+    # Patch ProjectSettings.asset to enable x86_64 architecture
+    - |
+      echo "Patching ProjectSettings.asset to enable x86_64 architecture...";
+      PROJECT_SETTINGS="ProjectSettings/ProjectSettings.asset";
+      if [ ! -f "$PROJECT_SETTINGS" ]; then
+        echo "ProjectSettings.asset not found at $PROJECT_SETTINGS. Skipping patch.";
+      else
+        echo "Found ProjectSettings.asset at $PROJECT_SETTINGS";
+        CURRENT_VALUE=$(grep "AndroidTargetArchitectures:" "$PROJECT_SETTINGS" | sed 's/.*AndroidTargetArchitectures: \([0-9]*\).*/\1/');
+        if [ -z "$CURRENT_VALUE" ]; then
+          echo "AndroidTargetArchitectures not found in file. Skipping patch.";
+        elif [ "$CURRENT_VALUE" = "7" ]; then
+          echo "AndroidTargetArchitectures already set to 7. Skipping patch.";
+        else
+          echo "Found AndroidTargetArchitectures: $CURRENT_VALUE. Changing to 7...";
+          sed -i "s/AndroidTargetArchitectures: [0-9]*/AndroidTargetArchitectures: 7/" "$PROJECT_SETTINGS";
+          echo "ProjectSettings.asset patched successfully.";
+          echo "AndroidTargetArchitectures changed from $CURRENT_VALUE to 7 (ARMv7+ARM64+x86_64)";
+        fi
+      fi
+
+
     # Build AAB
     - mkdir -p Build/Android;
     - export AAB_NAME="${PROJECT_NAME}_bundle_${AAB_VERSION}_version_${CURRENT_VERSION}.aab";
