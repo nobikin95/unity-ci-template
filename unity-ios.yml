@@ -502,6 +502,197 @@ build_ios_release:
 
     - python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_message.py" "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
 
+    # ========================================================================
+    # Build IPA Debug with Firebase Debug Flag
+    # ========================================================================
+    - echo ""
+    - echo "=================================================="
+    - echo "🔥 Building IPA Debug with Firebase Debug Mode..."
+    - echo "=================================================="
+
+    # Navigate back to Xcode project directory
+    - cd "$CI_PROJECT_DIR/Build/iOS"
+
+    # Add FIRDebugEnabled flag to Info.plist
+    - echo "Adding FIRDebugEnabled flag to Info.plist..."
+    - export INFO_PLIST_PATH="$CI_PROJECT_DIR/Build/iOS/Info.plist"
+    - |
+      if [ -f "$INFO_PLIST_PATH" ]; then
+        echo "Found Info.plist at $INFO_PLIST_PATH"
+
+        # Delete existing LSApplicationLaunchArguments if exists
+        /usr/libexec/PlistBuddy -c "Delete :LSApplicationLaunchArguments" "$INFO_PLIST_PATH" 2>/dev/null || true
+
+        # Add new LSApplicationLaunchArguments array with FIRDebugEnabled
+        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments array" "$INFO_PLIST_PATH"
+        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments:0 string -FIRDebugEnabled" "$INFO_PLIST_PATH"
+
+        echo "✅ FIRDebugEnabled flag added successfully"
+
+        # Verify the change
+        echo "Verifying Info.plist changes:"
+        /usr/libexec/PlistBuddy -c "Print :LSApplicationLaunchArguments" "$INFO_PLIST_PATH" || echo "Could not print LSApplicationLaunchArguments"
+      else
+        echo "⚠️ Warning: Info.plist not found at $INFO_PLIST_PATH"
+        echo "Continuing without adding FIRDebugEnabled flag..."
+      fi
+
+    # Refresh Keychain session before second export
+    - echo ""
+    - echo "🔑 Refreshing Keychain session for debug IPA export..."
+    - security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
+
+    # Build and export debug IPA
+    - |
+      if [ -d "Unity-iPhone.xcworkspace" ]; then
+        echo "Building debug IPA from workspace..."
+        export ARCHIVE_PATH_DEBUG="$CI_PROJECT_DIR/Build/iOS/${PROJECT_NAME}_${CURRENT_VERSION}_firebase_debug.xcarchive"
+        export EXPORT_LOG_PATH_DEBUG="$CI_PROJECT_DIR/export_debug.log"
+        export ARCHIVE_LOG_PATH_DEBUG="$CI_PROJECT_DIR/archive_debug.log"
+
+        echo "Archiving debug build to $ARCHIVE_PATH_DEBUG"
+        xcodebuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -configuration Release \
+          -archivePath "$ARCHIVE_PATH_DEBUG" \
+          -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+          DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
+          -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
+          > "$ARCHIVE_LOG_PATH_DEBUG" 2>&1 || {
+            echo "⚠️ Warning: Debug archive failed. Check log for details."
+            tail -n 50 "$ARCHIVE_LOG_PATH_DEBUG"
+            echo "Continuing without debug IPA..."
+          }
+
+        if [ -f "$ARCHIVE_PATH_DEBUG/Info.plist" ]; then
+          echo "✅ Debug archive completed successfully"
+
+          echo "Exporting debug archive..."
+          if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" ]; then
+            echo "⚠️ Warning: exportOptionsPlist.plist not found"
+            echo "Continuing without debug IPA export..."
+          else
+            # Refresh Keychain session again before export
+            echo "🔑 Refreshing Keychain session before export..."
+            security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
+
+            xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH_DEBUG" \
+              -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Debug" \
+              -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" \
+              -allowProvisioningUpdates \
+              -quiet \
+              > "$EXPORT_LOG_PATH_DEBUG" 2>&1 || {
+                echo "⚠️ Warning: Debug export failed. Check log for details."
+                tail -n 50 "$EXPORT_LOG_PATH_DEBUG"
+                echo "Continuing without debug IPA..."
+              }
+
+            # Check if debug IPA was created
+            DEBUG_IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Debug" -name "*.ipa" 2>/dev/null | head -1)
+            if [ -n "$DEBUG_IPA_FILE" ] && [ -f "$DEBUG_IPA_FILE" ]; then
+              echo "✅ Debug IPA exported successfully!"
+              DEBUG_IPA_SIZE=$(ls -lh "$DEBUG_IPA_FILE" | awk '{print $5}')
+              echo "📱 Debug IPA file: $DEBUG_IPA_FILE"
+              echo "📊 Debug IPA size: $DEBUG_IPA_SIZE"
+
+              # Upload debug IPA to Slack
+              echo ""
+              echo "📤 Uploading debug IPA to Slack..."
+              DEBUG_CHANGELOG="🔥 Firebase Debug Mode IPA - Version ${CURRENT_VERSION}\n\n⚠️ This build has Firebase Debug Mode enabled for QA testing.\nUse this to verify Firebase Analytics events in DebugView.\n\n📝 Based on the same build uploaded to TestFlight."
+
+              if python3 Assets/cicd/ci/upload_slack.py "$DEBUG_IPA_FILE" "$DEBUG_CHANGELOG" "$SLACK_USER_IDS"; then
+                echo "✅ Successfully uploaded debug IPA to Slack!"
+              else
+                echo "⚠️ Warning: Failed to upload debug IPA to Slack"
+                echo "Debug IPA is available in artifacts"
+              fi
+            else
+              echo "⚠️ Warning: Debug IPA file not found after export"
+              echo "Check export_debug.log for details"
+            fi
+          fi
+        else
+          echo "⚠️ Debug archive was not created successfully"
+        fi
+
+      elif [ -d "Unity-iPhone.xcodeproj" ]; then
+        echo "Building debug IPA from project..."
+        export ARCHIVE_PATH_DEBUG="$CI_PROJECT_DIR/Build/iOS/${PROJECT_NAME}_${CURRENT_VERSION}_firebase_debug.xcarchive"
+        export EXPORT_LOG_PATH_DEBUG="$CI_PROJECT_DIR/export_debug.log"
+        export ARCHIVE_LOG_PATH_DEBUG="$CI_PROJECT_DIR/archive_debug.log"
+
+        echo "Archiving debug build to $ARCHIVE_PATH_DEBUG"
+        xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
+          -archivePath "$ARCHIVE_PATH_DEBUG" \
+          -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+          DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
+          -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
+          > "$ARCHIVE_LOG_PATH_DEBUG" 2>&1 || {
+            echo "⚠️ Warning: Debug archive failed. Check log for details."
+            tail -n 50 "$ARCHIVE_LOG_PATH_DEBUG"
+            echo "Continuing without debug IPA..."
+          }
+
+        if [ -f "$ARCHIVE_PATH_DEBUG/Info.plist" ]; then
+          echo "✅ Debug archive completed successfully"
+
+          echo "Exporting debug archive..."
+          if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" ]; then
+            echo "⚠️ Warning: exportOptionsPlist.plist not found"
+            echo "Continuing without debug IPA export..."
+          else
+            # Refresh Keychain session again before export
+            echo "🔑 Refreshing Keychain session before export..."
+            security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
+
+            xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH_DEBUG" \
+              -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Debug" \
+              -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" \
+              -allowProvisioningUpdates \
+              -quiet \
+              > "$EXPORT_LOG_PATH_DEBUG" 2>&1 || {
+                echo "⚠️ Warning: Debug export failed. Check log for details."
+                tail -n 50 "$EXPORT_LOG_PATH_DEBUG"
+                echo "Continuing without debug IPA..."
+              }
+
+            # Check if debug IPA was created
+            DEBUG_IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Debug" -name "*.ipa" 2>/dev/null | head -1)
+            if [ -n "$DEBUG_IPA_FILE" ] && [ -f "$DEBUG_IPA_FILE" ]; then
+              echo "✅ Debug IPA exported successfully!"
+              DEBUG_IPA_SIZE=$(ls -lh "$DEBUG_IPA_FILE" | awk '{print $5}')
+              echo "📱 Debug IPA file: $DEBUG_IPA_FILE"
+              echo "📊 Debug IPA size: $DEBUG_IPA_SIZE"
+
+              # Upload debug IPA to Slack
+              echo ""
+              echo "📤 Uploading debug IPA to Slack..."
+              DEBUG_CHANGELOG="🔥 Firebase Debug Mode IPA - Version ${CURRENT_VERSION}\n\n⚠️ This build has Firebase Debug Mode enabled for QA testing.\nUse this to verify Firebase Analytics events in DebugView.\n\n📝 Based on the same build uploaded to TestFlight."
+
+              if python3 Assets/cicd/ci/upload_slack.py "$DEBUG_IPA_FILE" "$DEBUG_CHANGELOG" "$SLACK_USER_IDS"; then
+                echo "✅ Successfully uploaded debug IPA to Slack!"
+              else
+                echo "⚠️ Warning: Failed to upload debug IPA to Slack"
+                echo "Debug IPA is available in artifacts"
+              fi
+            else
+              echo "⚠️ Warning: Debug IPA file not found after export"
+              echo "Check export_debug.log for details"
+            fi
+          fi
+        else
+          echo "⚠️ Debug archive was not created successfully"
+        fi
+      else
+        echo "⚠️ Warning: No Xcode workspace or project found for debug build"
+      fi
+
+    - cd "$CI_PROJECT_DIR"
+    - echo ""
+    - echo "=================================================="
+    - echo "✅ Build process completed!"
+    - echo "   - Release IPA: Uploaded to TestFlight ✈️"
+    - echo "   - Debug IPA: Uploaded to Slack 🔥"
+    - echo "=================================================="
+
   after_script:
     # Ensure we're in the correct working directory
     - echo "📍 Ensuring correct working directory..."
@@ -547,211 +738,12 @@ build_ios_release:
       - build_output.log
       - archive_release.log
       - export_release.log
+      - archive_debug.log
+      - export_debug.log
       - fastlane_upload.log
       - fastlane/
+      - Build/iOS/ExportedIPA_Debug/*.ipa
     when: always
     expire_in: 1 days
 
-build_ios_ipa:
-  stage: build_ios
-  before_script:
-    - export BUILD_TYPE="IPA"
-    - *common_before_script
-    # Define the shell function directly here using the content alias
-    - |
-      handle_xcode_error() {
-        error_message="$1" # First argument is the error message
-        log_file="$2"      # Second argument is the log file (optional)
-        echo "-----------------------------------------------------"
-        echo "[ERROR] $error_message"
-        if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-          echo "Last 50 lines of $log_file:"
-          tail -n 50 "$log_file"
-        fi
-        echo "-----------------------------------------------------"
-        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
-        if [ -n "$NOTIFY_DEV" ]; then
-          python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
-        fi
-        exit 1
-      }
-  retry:
-    max: 2
-    when:
-      - runner_system_failure
-      - stuck_or_timeout_failure
-      - api_failure
-      - unknown_failure
-      - script_failure
-  tags:
-    - macos
-  timeout: 60m
-  rules:
-    - if: '$CI_COMMIT_TAG =~ /^ios-develop\/ver_/'
-      when: manual
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME == "ios-develop"'
-      when: manual
-  script:
-    - *common_build_steps
-    - echo "Adding FIRDebugEnabled flag to Info.plist..."
-    - INFO_PLIST_PATH="Build/iOS/Info.plist"
-    - | # Use block scalar for multi-line if statement
-      if [ -f "$INFO_PLIST_PATH" ]; then
-        /usr/libexec/PlistBuddy -c "Delete :LSApplicationLaunchArguments" "$INFO_PLIST_PATH" 2>/dev/null || true
-        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments array" "$INFO_PLIST_PATH"
-        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments:0 string -FIRDebugEnabled" "$INFO_PLIST_PATH"
-        echo "FIRDebugEnabled flag added."
-      else
-        handle_xcode_error "Info.plist not found at $INFO_PLIST_PATH"
-      fi
 
-    # Add step to clean DerivedData before Xcode build
-    - echo "Ensuring clean build environment by removing previous DerivedData..."
-    - rm -rf "$XCODE_DERIVED_DATA_PATH"
-
-    - echo "Building .ipa file using Xcode with automatic signing..."
-    - cd Build/iOS
-
-    # Check and create workspace if needed
-    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
-    - "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
-
-    - | # Use block scalar for multi-line if statement
-      if [ -d "Unity-iPhone.xcworkspace" ]; then
-        echo "Found Xcode workspace. Building with xcodebuild...";
-        export ARCHIVE_PATH="$CI_PROJECT_DIR/Build/iOS/${PROJECT_NAME}_${CURRENT_VERSION}_dev.xcarchive"
-        export EXPORT_LOG_PATH="$CI_PROJECT_DIR/export_dev.log"
-        export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
-
-        echo "Archiving to $ARCHIVE_PATH"
-        xcodebuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -configuration Release \
-          -archivePath "$ARCHIVE_PATH" \
-          -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
-          DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
-          -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
-          > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
-        echo "✅ Archive completed successfully"
-
-        echo "Exporting archive with automatic signing..."
-
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
-          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
-        fi
-
-        # Simple export with automatic signing
-        echo "🎯 Exporting with automatic signing..."
-        OUTPUT_DIR="$CI_PROJECT_DIR/Build/iOS"
-        mkdir -p "$OUTPUT_DIR"
-
-        if xcodebuild -exportArchive \
-            -archivePath "$ARCHIVE_PATH" \
-            -exportPath "$OUTPUT_DIR/ExportedIPA_Dev" \
-            -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
-            -allowProvisioningUpdates \
-            > "$EXPORT_LOG_PATH" 2>&1; then
-
-          echo "✅ Export completed successfully!"
-
-          # Find and verify IPA file
-          EXPORTED_IPA=$(find "$OUTPUT_DIR/ExportedIPA_Dev" -name "*.ipa" | head -1)
-          if [ -n "$EXPORTED_IPA" ] && [ -f "$EXPORTED_IPA" ]; then
-            IPA_SIZE=$(ls -lh "$EXPORTED_IPA" | awk '{print $5}')
-            echo "📱 IPA created successfully:"
-            echo "   File: $EXPORTED_IPA"
-            echo "   Size: $IPA_SIZE"
-          else
-            echo "⚠️  Export succeeded but IPA not found in expected location"
-          fi
-
-        else
-          echo "❌ Export failed"
-          handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
-        fi
-
-      elif [ -d "Unity-iPhone.xcodeproj" ]; then
-        echo "Found Xcode project. Building with xcodebuild...";
-        export ARCHIVE_PATH="$CI_PROJECT_DIR/Build/iOS/${PROJECT_NAME}_${CURRENT_VERSION}_dev.xcarchive"
-        export EXPORT_LOG_PATH="$CI_PROJECT_DIR/export_dev.log"
-        export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
-
-        echo "Archiving to $ARCHIVE_PATH"
-        xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
-          -archivePath "$ARCHIVE_PATH" \
-          -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
-          DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
-          -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
-          > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
-        echo "✅ Archive completed successfully"
-
-        echo "Exporting archive with automatic signing..."
-
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
-          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
-        fi
-
-        xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
-          -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Dev" \
-          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
-          -allowProvisioningUpdates \
-          -quiet \
-          > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
-        echo "✅ Export completed successfully"
-
-        # Look for IPA file in the correct location
-        echo "🔍 Searching for IPA file in Build/iOS directory..."
-
-        IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" | head -n 1)
-        if [ -n "$IPA_FILE" ] && [ -f "$IPA_FILE" ]; then
-          IPA_SIZE=$(ls -lh "$IPA_FILE" | awk '{print $5}')
-          echo "✅ Found IPA: $IPA_FILE"
-          echo "📊 IPA Size: $IPA_SIZE"
-        else
-          echo "❌ Could not find IPA file"
-          echo "🔍 Available files:"
-          find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" -o -name "*.app" 2>/dev/null | head -5 || echo "No files found"
-        fi
-      else
-        handle_xcode_error "No Xcode workspace or project found in Build/iOS."
-      fi
-    - cd "$CI_PROJECT_DIR"
-    - *common_update_version
-
-  after_script:
-    # Ensure we're in the correct working directory
-    - echo "📍 Ensuring correct working directory..."
-    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
-    - echo "✅ Current directory $(pwd)"
-
-    # Wait for file system sync (important on macOS APFS)
-    - echo "⏳ Waiting for file system sync..."
-    - sleep 3
-    - sync
-
-    # Debug: Display directory structure
-    - echo "🔍 Project directory structure:"
-    - echo "   - CI_PROJECT_DIR $CI_PROJECT_DIR"
-    - echo "   - Current PWD $(pwd)"
-    - echo "   - Disk usage:"
-    - du -sh "$CI_PROJECT_DIR" 2>/dev/null || echo "Cannot calculate size"
-    - |
-      echo "   - Top-level contents:"
-      ls -lah "$CI_PROJECT_DIR" | head -20 || echo "Cannot list directory"
-    - |
-      if [ -d "$CI_PROJECT_DIR/Build/iOS" ]; then
-        echo "   - Build/iOS contents:"
-        ls -lah "$CI_PROJECT_DIR/Build/iOS" | head -20 || echo "Cannot list Build/iOS"
-      else
-        echo "   - Build/iOS directory does not exist"
-      fi
-
-    # Verify external disk
-    - echo ""
-    - echo "🔍 Verifying external disk before backup..."
-    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
-    - "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
-
-    # Start backup process
-    - echo ""
-    - echo "🔧 Starting full project backup with enhanced verification..."
-    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
-    - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
