@@ -417,7 +417,7 @@ build_ios_release:
     - echo "=================================================="
     - echo "ℹ️  TestFlight upload is temporarily disabled"
     - echo "ℹ️  Release IPA will only be uploaded to Slack"
-    - echo "ℹ️  To re-enable: Uncomment TestFlight section in unity-ios.yml"
+    - echo "ℹ️  To re-enable Uncomment TestFlight section in unity-ios.yml"
     - echo "=================================================="
 
     # Create empty log file for artifacts
@@ -722,8 +722,8 @@ build_ios_release:
     - echo ""
     - echo "=================================================="
     - echo "✅ Build process completed!"
-    - echo "   - Release IPA: Uploaded to Slack ✈️ (TestFlight SKIPPED)"
-    - echo "   - Debug IPA: Uploaded to Slack 🔥"
+    - echo "   - Release IPA Uploaded to Slack ✈️ (TestFlight SKIPPED)"
+    - echo "   - Debug IPA Uploaded to Slack 🔥"
     - echo "=================================================="
 
   after_script:
