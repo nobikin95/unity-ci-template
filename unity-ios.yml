@@ -404,60 +404,93 @@ build_ios_release:
         handle_xcode_error "No Xcode workspace or project found in Build/iOS."
       fi
 
-    # Upload IPA to TestFlight using Fastlane
+    # ========================================================================
+    # Upload IPA to TestFlight using Fastlane - TEMPORARILY DISABLED
+    # ========================================================================
+    # NOTE: TestFlight upload is currently disabled for faster testing.
+    #       To re-enable, uncomment the section below.
+    # ========================================================================
+
     - cd "$CI_PROJECT_DIR"
     - echo "=================================================="
-    - echo "📤 Uploading IPA to TestFlight using Fastlane..."
+    - echo "⏭️  SKIPPING TestFlight Upload (Disabled)"
+    - echo "=================================================="
+    - echo "ℹ️  TestFlight upload is temporarily disabled"
+    - echo "ℹ️  Release IPA will only be uploaded to Slack"
+    - echo "ℹ️  To re-enable: Uncomment TestFlight section in unity-ios.yml"
     - echo "=================================================="
 
-    # Verify IPA file exists
+    # Create empty log file for artifacts
+    - echo "TestFlight upload skipped - $(date)" > fastlane_upload.log
+
+    # Find IPA file for Slack upload
     - |
       IPA_FILE=$(find Build/iOS/ExportedIPA_Release -name "*.ipa" | head -1)
       if [ -z "$IPA_FILE" ]; then
-        handle_xcode_error "No IPA file found in Build/iOS/ExportedIPA_Release"
-      fi
-      echo "Found IPA file: $IPA_FILE"
-      IPA_SIZE=$(ls -lh "$IPA_FILE" | awk '{print $5}')
-      echo "IPA file size: $IPA_SIZE"
-
-    # Setup Fastlane
-    - echo "Setting up Fastlane configuration..."
-    - mkdir -p fastlane
-    - cp Assets/cicd/ci/deploy/Fastfile fastlane/Fastfile
-
-    # Verify required environment variables
-    - |
-      if [ -z "$APP_STORE_KEY_BASE64" ]; then
-        handle_xcode_error "APP_STORE_KEY_BASE64 environment variable is not set"
-      fi
-      if [ -z "$APP_STORE_KEY_ID" ]; then
-        handle_xcode_error "APP_STORE_KEY_ID environment variable is not set"
-      fi
-      if [ -z "$APP_STORE_ISSUER_ID" ]; then
-        handle_xcode_error "APP_STORE_ISSUER_ID environment variable is not set"
-      fi
-      echo "✅ All required environment variables are set"
-      echo "🔍 Debug: APP_STORE_KEY_ID = $APP_STORE_KEY_ID"
-      echo "🔍 Debug: APP_STORE_ISSUER_ID = $APP_STORE_ISSUER_ID"
-      echo "🔍 Debug: APP_STORE_KEY_BASE64 length = ${#APP_STORE_KEY_BASE64}"
-
-    # Export environment variables for Fastlane (explicitly export all required vars)
-    - export APP_STORE_KEY_BASE64="$APP_STORE_KEY_BASE64"
-    - export APP_STORE_KEY_ID="$APP_STORE_KEY_ID"
-    - export APP_STORE_ISSUER_ID="$APP_STORE_ISSUER_ID"
-    - export FASTLANE_SKIP_INTERACTIVE=1
-    - export FASTLANE_HIDE_TIMESTAMP=1
-
-    # Run Fastlane upload
-    - echo "Starting Fastlane upload to TestFlight..."
-    - |
-      if fastlane upload_testflight 2>&1 | tee fastlane_upload.log; then
-        echo "✅ Successfully uploaded IPA to TestFlight!"
+        echo "⚠️ Warning: No IPA file found in Build/iOS/ExportedIPA_Release"
       else
-        echo "❌ Fastlane upload failed. Check fastlane_upload.log for details."
-        tail -n 100 fastlane_upload.log
-        handle_xcode_error "Fastlane upload to TestFlight failed" "fastlane_upload.log"
+        echo "Found IPA file: $IPA_FILE"
+        IPA_SIZE=$(ls -lh "$IPA_FILE" | awk '{print $5}')
+        echo "IPA file size: $IPA_SIZE"
       fi
+
+    # ========================================================================
+    # COMMENTED OUT: Upload IPA to TestFlight using Fastlane
+    # ========================================================================
+    # - cd "$CI_PROJECT_DIR"
+    # - echo "=================================================="
+    # - echo "📤 Uploading IPA to TestFlight using Fastlane..."
+    # - echo "=================================================="
+    #
+    # # Verify IPA file exists
+    # - |
+    #   IPA_FILE=$(find Build/iOS/ExportedIPA_Release -name "*.ipa" | head -1)
+    #   if [ -z "$IPA_FILE" ]; then
+    #     handle_xcode_error "No IPA file found in Build/iOS/ExportedIPA_Release"
+    #   fi
+    #   echo "Found IPA file: $IPA_FILE"
+    #   IPA_SIZE=$(ls -lh "$IPA_FILE" | awk '{print $5}')
+    #   echo "IPA file size: $IPA_SIZE"
+    #
+    # # Setup Fastlane
+    # - echo "Setting up Fastlane configuration..."
+    # - mkdir -p fastlane
+    # - cp Assets/cicd/ci/deploy/Fastfile fastlane/Fastfile
+    #
+    # # Verify required environment variables
+    # - |
+    #   if [ -z "$APP_STORE_KEY_BASE64" ]; then
+    #     handle_xcode_error "APP_STORE_KEY_BASE64 environment variable is not set"
+    #   fi
+    #   if [ -z "$APP_STORE_KEY_ID" ]; then
+    #     handle_xcode_error "APP_STORE_KEY_ID environment variable is not set"
+    #   fi
+    #   if [ -z "$APP_STORE_ISSUER_ID" ]; then
+    #     handle_xcode_error "APP_STORE_ISSUER_ID environment variable is not set"
+    #   fi
+    #   echo "✅ All required environment variables are set"
+    #   echo "🔍 Debug: APP_STORE_KEY_ID = $APP_STORE_KEY_ID"
+    #   echo "🔍 Debug: APP_STORE_ISSUER_ID = $APP_STORE_ISSUER_ID"
+    #   echo "🔍 Debug: APP_STORE_KEY_BASE64 length = ${#APP_STORE_KEY_BASE64}"
+    #
+    # # Export environment variables for Fastlane (explicitly export all required vars)
+    # - export APP_STORE_KEY_BASE64="$APP_STORE_KEY_BASE64"
+    # - export APP_STORE_KEY_ID="$APP_STORE_KEY_ID"
+    # - export APP_STORE_ISSUER_ID="$APP_STORE_ISSUER_ID"
+    # - export FASTLANE_SKIP_INTERACTIVE=1
+    # - export FASTLANE_HIDE_TIMESTAMP=1
+    #
+    # # Run Fastlane upload
+    # - echo "Starting Fastlane upload to TestFlight..."
+    # - |
+    #   if fastlane upload_testflight 2>&1 | tee fastlane_upload.log; then
+    #     echo "✅ Successfully uploaded IPA to TestFlight!"
+    #   else
+    #     echo "❌ Fastlane upload failed. Check fastlane_upload.log for details."
+    #     tail -n 100 fastlane_upload.log
+    #     handle_xcode_error "Fastlane upload to TestFlight failed" "fastlane_upload.log"
+    #   fi
+    # ========================================================================
 
     - cd "$CI_PROJECT_DIR"
     - *common_update_version
@@ -596,7 +629,7 @@ build_ios_release:
               # Upload debug IPA to Slack
               echo ""
               echo "📤 Uploading debug IPA to Slack..."
-              DEBUG_CHANGELOG="🔥 Firebase Debug Mode IPA - Version ${CURRENT_VERSION}\n\n⚠️ This build has Firebase Debug Mode enabled for QA testing.\nUse this to verify Firebase Analytics events in DebugView.\n\n📝 Based on the same build uploaded to TestFlight."
+              DEBUG_CHANGELOG="🔥 Firebase Debug Mode IPA - Version ${CURRENT_VERSION}\n\n⚠️ This build has Firebase Debug Mode enabled for QA testing.\nUse this to verify Firebase Analytics events in DebugView.\n\n📝 Based on the same build as Release IPA (TestFlight upload skipped)."
 
               if python3 Assets/cicd/ci/upload_slack.py "$DEBUG_IPA_FILE" "$DEBUG_CHANGELOG" "$SLACK_USER_IDS"; then
                 echo "✅ Successfully uploaded debug IPA to Slack!"
@@ -665,7 +698,7 @@ build_ios_release:
               # Upload debug IPA to Slack
               echo ""
               echo "📤 Uploading debug IPA to Slack..."
-              DEBUG_CHANGELOG="🔥 Firebase Debug Mode IPA - Version ${CURRENT_VERSION}\n\n⚠️ This build has Firebase Debug Mode enabled for QA testing.\nUse this to verify Firebase Analytics events in DebugView.\n\n📝 Based on the same build uploaded to TestFlight."
+              DEBUG_CHANGELOG="🔥 Firebase Debug Mode IPA - Version ${CURRENT_VERSION}\n\n⚠️ This build has Firebase Debug Mode enabled for QA testing.\nUse this to verify Firebase Analytics events in DebugView.\n\n📝 Based on the same build as Release IPA (TestFlight upload skipped)."
 
               if python3 Assets/cicd/ci/upload_slack.py "$DEBUG_IPA_FILE" "$DEBUG_CHANGELOG" "$SLACK_USER_IDS"; then
                 echo "✅ Successfully uploaded debug IPA to Slack!"
@@ -689,7 +722,7 @@ build_ios_release:
     - echo ""
     - echo "=================================================="
     - echo "✅ Build process completed!"
-    - echo "   - Release IPA: Uploaded to TestFlight ✈️"
+    - echo "   - Release IPA: Uploaded to Slack ✈️ (TestFlight SKIPPED)"
     - echo "   - Debug IPA: Uploaded to Slack 🔥"
     - echo "=================================================="
 
