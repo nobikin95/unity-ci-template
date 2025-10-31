@@ -40,122 +40,6 @@ variables:
   - echo "Updated m_ShowUnitySplashLogo in ProjectSettings.asset to 0"
   - grep "m_ShowUnitySplashLogo:" ProjectSettings/ProjectSettings.asset
 
-.common_build_steps: &common_build_steps
-  # Update Scripting Symbol
-  - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
-  - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
-  - echo "Starting iOS .ipa build..."
-  - mkdir -p Build/iOS
-  - python3 Assets/cicd/ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
-  - python3 Assets/cicd/ci/send_slack_direct_message.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" notify_user="$NOTIFY_DEV" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
-  - |
-    # Function to perform Unity build with framework verification retry
-    perform_unity_build_with_retry() {
-      local max_retries=10
-      local retry_count=0
-      
-      while [ $retry_count -lt $max_retries ]; do
-        echo "🔄 Unity build attempt $((retry_count + 1))/$max_retries"
-        
-        # Clean previous build
-        if [ $retry_count -gt 0 ]; then
-          echo "🧹 Cleaning previous build..."
-          rm -rf Build/iOS
-        fi
-        
-        # Unity build
-        echo "Running Unity build command with UNITY_PATH=$UNITY_PATH"
-        $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget iOS -executeMethod BuildScript.BuildiOS -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
-          echo "Unity build failed. Output log:";
-          tail -n 50 $CI_PROJECT_DIR/build_output.log;
-          python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-          python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
-          exit 1;
-        }
-        
-        echo "Unity build completed. Checking Build/iOS directory contents:"
-        ls -l Build/iOS/
-        
-        # Check if Xcode project exists
-        if [ ! -d "Build/iOS/Unity-iPhone.xcodeproj" ]; then
-          echo "Error... Xcode project not found in Build/iOS directory after Unity build.";
-          python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-          python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
-          exit 1;
-        fi
-        
-        echo "Validating Xcode project file..."
-        plutil -lint Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj || {
-          echo "The Xcode project file has syntax errors.";
-          python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-          python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
-          exit 1;
-        }
-        
-        echo "⚡ Running Xcode Framework Verification..."
-        chmod +x Assets/cicd/ci/verify_frameworks.sh
-        
-        # Chạy verify_frameworks.sh với error handling
-        echo ""
-        echo "🔍 Starting framework verification..."
-        if Assets/cicd/ci/verify_frameworks.sh; then
-          echo ""
-          echo "✅ Framework verification passed!"
-          echo "🎉 All required frameworks are present and correctly configured!"
-          echo ""
-          break
-        else
-          verify_exit_code=$?
-          echo ""
-          echo "❌ Framework verification failed with exit code $verify_exit_code"
-          echo ""
-          
-          retry_count=$((retry_count + 1))
-          if [ $retry_count -lt $max_retries ]; then
-            echo "🔄 Retrying Unity build..."
-            echo "📋 Missing frameworks detected. Will retry build..."
-            echo "🔧 BuildScript.cs should automatically add all required frameworks"
-            echo "⏳ Waiting 10 seconds before retry..."
-            sleep 10
-          else
-            echo ""
-            echo "❌ Framework verification failed after $max_retries attempts."
-            echo "📋 Final missing frameworks:"
-            echo ""
-            Assets/cicd/ci/verify_frameworks.sh || echo "Framework verification script failed"
-            echo ""
-            echo "💡 This might indicate an issue with the BuildScript.cs post-processing"
-            echo "⚠️ Continuing with build despite framework verification issues..."
-            echo ""
-            break
-          fi
-        fi
-      done
-    }
-    
-    # Execute the build function
-    perform_unity_build_with_retry
-  - echo "Done..."
-  
-  # Thêm validation sau khi verify_frameworks.sh
-  - echo "Validating Xcode project after framework verification..."
-  - | # Use block scalar for command with || error handling
-    plutil -lint Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj || {
-      echo "Xcode project file has syntax errors after framework verification.";
-      echo "Attempting to restore from backup or rebuild...";
-      # Nếu có backup, restore lại
-      if [ -f "Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj.backup" ]; then
-        cp "Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj.backup" "Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj";
-        echo "Restored project.pbxproj from backup.";
-      else
-        echo "No backup found. Project file may be corrupted.";
-        python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-        python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
-        exit 1;
-      fi
-    }
-  - echo "Xcode project validation passed after framework verification."
-
 .common_update_version: &common_update_version
   - echo "Updating IOS_VERSION in GitLab CI/CD Variables..."
   - export PATCH_VERSION=$((PATCH_VERSION + 1))
@@ -172,22 +56,6 @@ variables:
   - export NEW_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
   - echo "Next IOS_VERSION will be $NEW_VERSION"
   - 'curl --fail -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/IOS_VERSION"'
-
-.handle_xcode_error_script_content: &handle_xcode_error_script_content
-  error_message="$1" 
-  log_file="$2" 
-  echo "-----------------------------------------------------"
-  echo "[ERROR] $error_message"
-  if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-    echo "Last 50 lines of $log_file:"
-    tail -n 50 "$log_file"
-  fi
-  echo "-----------------------------------------------------"
-  python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
-  if [ -n "$NOTIFY_DEV" ]; then
-    python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
-  fi
-  exit 1
 
 build_ios_release:
   stage: build_ios
@@ -229,7 +97,120 @@ build_ios_release:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
-    - *common_build_steps
+    # Update Scripting Symbol
+    - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
+    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
+    - echo "Starting iOS .ipa build..."
+    - mkdir -p Build/iOS
+    - python3 Assets/cicd/ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+    - python3 Assets/cicd/ci/send_slack_direct_message.py build_start project_name="$PROJECT_NAME" platform="🍏iOS" notify_user="$NOTIFY_DEV" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+    - |
+      # Function to perform Unity build with framework verification retry
+      perform_unity_build_with_retry() {
+        local max_retries=10
+        local retry_count=0
+
+        while [ $retry_count -lt $max_retries ]; do
+          echo "🔄 Unity build attempt $((retry_count + 1))/$max_retries"
+
+          # Clean previous build
+          if [ $retry_count -gt 0 ]; then
+            echo "🧹 Cleaning previous build..."
+            rm -rf Build/iOS
+          fi
+
+          # Unity build
+          echo "Running Unity build command with UNITY_PATH=$UNITY_PATH"
+          $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget iOS -executeMethod BuildScript.BuildiOS -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
+            echo "Unity build failed. Output log:";
+            tail -n 50 $CI_PROJECT_DIR/build_output.log;
+            python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+            python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+            exit 1;
+          }
+
+          echo "Unity build completed. Checking Build/iOS directory contents:"
+          ls -l Build/iOS/
+
+          # Check if Xcode project exists
+          if [ ! -d "Build/iOS/Unity-iPhone.xcodeproj" ]; then
+            echo "Error... Xcode project not found in Build/iOS directory after Unity build.";
+            python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+            python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+            exit 1;
+          fi
+
+          echo "Validating Xcode project file..."
+          plutil -lint Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj || {
+            echo "The Xcode project file has syntax errors.";
+            python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+            python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+            exit 1;
+          }
+
+          echo "⚡ Running Xcode Framework Verification..."
+          chmod +x Assets/cicd/ci/verify_frameworks.sh
+
+          # Chạy verify_frameworks.sh với error handling
+          echo ""
+          echo "🔍 Starting framework verification..."
+          if Assets/cicd/ci/verify_frameworks.sh; then
+            echo ""
+            echo "✅ Framework verification passed!"
+            echo "🎉 All required frameworks are present and correctly configured!"
+            echo ""
+            break
+          else
+            verify_exit_code=$?
+            echo ""
+            echo "❌ Framework verification failed with exit code $verify_exit_code"
+            echo ""
+
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+              echo "🔄 Retrying Unity build..."
+              echo "📋 Missing frameworks detected. Will retry build..."
+              echo "🔧 BuildScript.cs should automatically add all required frameworks"
+              echo "⏳ Waiting 10 seconds before retry..."
+              sleep 10
+            else
+              echo ""
+              echo "❌ Framework verification failed after $max_retries attempts."
+              echo "📋 Final missing frameworks:"
+              echo ""
+              Assets/cicd/ci/verify_frameworks.sh || echo "Framework verification script failed"
+              echo ""
+              echo "💡 This might indicate an issue with the BuildScript.cs post-processing"
+              echo "⚠️ Continuing with build despite framework verification issues..."
+              echo ""
+              break
+            fi
+          fi
+        done
+      }
+
+      # Execute the build function
+      perform_unity_build_with_retry
+    - echo "Done..."
+
+    # Thêm validation sau khi verify_frameworks.sh
+    - echo "Validating Xcode project after framework verification..."
+    - |
+      plutil -lint Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj || {
+        echo "Xcode project file has syntax errors after framework verification.";
+        echo "Attempting to restore from backup or rebuild...";
+        # Nếu có backup, restore lại
+        if [ -f "Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj.backup" ]; then
+          cp "Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj.backup" "Build/iOS/Unity-iPhone.xcodeproj/project.pbxproj";
+          echo "Restored project.pbxproj from backup.";
+        else
+          echo "No backup found. Project file may be corrupted.";
+          python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+          python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+          exit 1;
+        fi
+      }
+    - echo "Xcode project validation passed after framework verification."
 
     # Fetch changelog for iOS release tags
     - echo "Fetching changelog for iOS release build..."
