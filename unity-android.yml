@@ -191,7 +191,7 @@ build_apk_and_verify:
 
     # Resolve packages to generate Library/PackageCache
     - echo "Resolving Unity packages to generate Library/PackageCache..."
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve || echo "Package resolution completed with warnings"
+    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve > /dev/null 2>&1 || echo "Package resolution completed with warnings"
 
     # Patch Adjust.cs to insert VERIFY_TOKEN block before 'if (!this.startManually)'
     - |
@@ -428,7 +428,7 @@ build_apk_and_verify_manual:
 
     # Resolve packages to generate Library/PackageCache
     - echo "Resolving Unity packages to generate Library/PackageCache..."
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve || echo "Package resolution completed with warnings"
+    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve > /dev/null 2>&1 || echo "Package resolution completed with warnings"
 
     # Patch Adjust.cs to insert VERIFY_TOKEN block before 'if (!this.startManually)'
     - |
