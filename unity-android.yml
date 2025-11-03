@@ -9,7 +9,10 @@ variables:
 .common_before_script: &common_before_script
   - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
-  - git submodule update --init --recursive --checkout
+  # Clone Assets/cicd to latest version (non-recursive)
+  - git submodule update --init --remote --checkout Assets/cicd
+  # Clone all other submodules recursively (exclude Assets/cicd)
+  - git config --file .gitmodules --get-regexp path | awk '$2 != "Assets/cicd" {print $2}' | xargs -r -I {} git submodule update --init --recursive --checkout {}
   - git submodule foreach 'git reset --hard'
   - git submodule foreach 'git clean -fdx'
   
