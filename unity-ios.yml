@@ -758,3 +758,36 @@ build_ios_ipa:
     - echo "🔧 Starting full project backup with enhanced verification..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
+
+
+
+build_xcode_project:
+  stage: build_ios
+  before_script:
+    - export BUILD_TYPE="Xcode Project"
+    - *common_before_script
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+      - script_failure
+  tags:
+    - macos
+  timeout: 60m
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  script:
+    - *common_build_steps
+    - echo "✅ Xcode project build completed successfully!"
+    - echo "📁 Xcode project location Build/iOS/Unity-iPhone.xcodeproj"
+    - |
+      if [ -d "Build/iOS/Unity-iPhone.xcodeproj" ]; then
+        echo "✅ Xcode project verified at Build/iOS/Unity-iPhone.xcodeproj"
+      else
+        echo "❌ Xcode project not found!"
+        exit 1
+      fi
