@@ -762,7 +762,7 @@ build_ios_ipa:
 
 
 build_xcode_project:
-  stage: build_ios
+  stage: build_self_test
   before_script:
     - export BUILD_TYPE="Xcode Project"
     - *common_before_script
