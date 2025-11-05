@@ -1083,14 +1083,6 @@ check_build_failure:
 upload_internal:
   stage: deploy
   resource_group: "${CI_PROJECT_ID}"
-  retry:
-    max: 1
-    when:
-      - runner_system_failure
-      - stuck_or_timeout_failure
-      - api_failure
-      - unknown_failure
-      - script_failure
   needs:
     - build_aab
   rules:
@@ -1145,8 +1137,54 @@ upload_internal:
     - export FASTLANE_SKIP_INTERACTIVE=1
     - export FASTLANE_DEBUG=1
     - echo "Starting fastlane upload_internal in verbose mode..."
-    - fastlane upload_internal --verbose 2>&1 | tee fastlane_upload.log
-    - echo "Upload internal completed. Please check fastlane_upload.log for warnings."
+
+    # Run fastlane and capture exit code
+    - |
+      set +e  # Disable exit on error temporarily
+      fastlane upload_internal --verbose 2>&1 | tee fastlane_upload.log
+      FASTLANE_EXIT_CODE=$?
+      set -e  # Re-enable exit on error
+
+      if [ $FASTLANE_EXIT_CODE -ne 0 ]; then
+        echo "❌ Fastlane upload_internal failed with exit code $FASTLANE_EXIT_CODE"
+        echo "📤 Uploading AAB and symbols files to Slack as fallback..."
+
+        # Prepare failure message
+        FAILURE_MESSAGE="🚨 *Fastlane Upload Failed*\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}Project: *${PROJECT_NAME}*\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}Platform: *Android*\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}Build: *${AAB_NAME}*\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}Exit Code: ${FASTLANE_EXIT_CODE}\n\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}📦 Files are being uploaded to this channel for manual deployment."
+
+        # Upload AAB file to Slack
+        if [ -f "$AAB_PATH" ]; then
+          echo "Uploading AAB file to Slack..."
+          python3 Assets/cicd/ci/upload_slack.py "$AAB_PATH" "$FAILURE_MESSAGE" "$SLACK_USER_IDS" || echo "Failed to upload AAB file"
+        else
+          echo "⚠️ AAB file not found at $AAB_PATH"
+        fi
+
+        # Upload symbols file to Slack if exists
+        if [ -n "$SYMBOLS_PATH" ] && [ -f "$SYMBOLS_PATH" ]; then
+          echo "Uploading symbols file to Slack..."
+          SYMBOLS_MESSAGE="📊 *Symbols file for ${AAB_NAME}*"
+          python3 Assets/cicd/ci/upload_slack.py "$SYMBOLS_PATH" "$SYMBOLS_MESSAGE" "$SLACK_USER_IDS" || echo "Failed to upload symbols file"
+        else
+          echo "⚠️ No symbols file found to upload"
+        fi
+
+        # Send notification to developers
+        if [ -n "$NOTIFY_DEV" ]; then
+          echo "Sending failure notification to developers..."
+          python3 Assets/cicd/ci/send_slack_direct_message.py uploaded_to_internal_fail project_name="$PROJECT_NAME" platform="Android" build_name="$AAB_NAME" notify_user="$NOTIFY_DEV" || echo "Failed to send DM notification"
+        fi
+
+        echo "❌ Exiting with failure status"
+        exit $FASTLANE_EXIT_CODE
+      else
+        echo "✅ Upload internal completed successfully. Please check fastlane_upload.log for warnings."
+      fi
     
     - if [ -f supply_result.json ]; then
         warning_messages=$(jq -r '.release_status.warningMessages[]' supply_result.json 2>/dev/null || echo "No warnings found in JSON");
