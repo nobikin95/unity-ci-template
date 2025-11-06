@@ -778,8 +778,7 @@ build_xcode_project:
     - macos
   timeout: 60m
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-      when: manual
+    - when: manual
   script:
     - *common_build_steps
     - echo "✅ Xcode project build completed successfully!"
