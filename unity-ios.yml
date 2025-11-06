@@ -778,7 +778,8 @@ build_xcode_project:
     - macos
   timeout: 60m
   rules:
-    - when: manual
+    - if: '$CI_COMMIT_TAG =~ /ios-xcode/'
+      when: manual
   script:
     - *common_build_steps
     - echo "✅ Xcode project build completed successfully!"
