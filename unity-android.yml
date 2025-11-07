@@ -99,14 +99,245 @@ variables:
 
   # Webhook
   - python3 Assets/cicd/ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}"
-  - send_build_failure_notification() {
+
+  # Helper function to detect error type from build log
+  - |
+    detect_error_type() {
+      local log_file="$1"
+      if [ ! -f "$log_file" ]; then
+        echo "UNKNOWN"
+        return
+      fi
+
+      # Check for Gradle errors (higher priority as they occur later in build)
+      if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task" "$log_file"; then
+        echo "GRADLE"
+        return
+      fi
+
+      # Check for compilation errors
+      if grep -q "error CS\|Script Compilation Error\|CompilerError\|Assembly.*failed to compile" "$log_file"; then
+        echo "COMPILATION"
+        return
+      fi
+
+      # Check for missing APK (build succeeded but output missing)
+      if grep -q "Build succeeded\|Exiting batchmode successfully" "$log_file"; then
+        echo "APK_MISSING"
+        return
+      fi
+
+      echo "UNKNOWN"
+    }
+
+  # Helper function to extract error summary from build log
+  - |
+    extract_error_summary() {
+      local log_file="$1"
+      local error_type="$2"
+      local max_lines=10
+
+      if [ ! -f "$log_file" ]; then
+        echo "Log file not found"
+        return
+      fi
+
+      case "$error_type" in
+        "GRADLE")
+          # Extract Gradle error details
+          grep -A 3 "Execution failed for task\|PackageAndroidArtifact\|Gradle build failed" "$log_file" | head -n $max_lines
+          ;;
+        "COMPILATION")
+          # Extract compilation errors
+          grep "error CS\|Script Compilation Error" "$log_file" | head -n $max_lines
+          ;;
+        "APK_MISSING")
+          echo "Build completed but APK file not found in output directory"
+          ;;
+        *)
+          # Extract last 5 error lines
+          grep -i "error\|failed\|exception" "$log_file" | tail -n 5
+          ;;
+      esac
+    }
+
+  # Enhanced build failure notification with error type detection
+  - |
+    send_build_failure_notification() {
+      local error_context="${1:-UNKNOWN}"  # GRADLE_RETRY_EXHAUSTED, COMPILATION, APK_MISSING, etc.
+      local log_file="$CI_PROJECT_DIR/build_output.log"
+
+      echo "========================================";
       echo "Sending build failure notifications...";
+      echo "Error context: $error_context";
+      echo "========================================";
+
+      # Detect error type from log
+      local error_type=$(detect_error_type "$log_file")
+      echo "Detected error type: $error_type";
+
+      # Extract error summary
+      local error_summary=$(extract_error_summary "$log_file" "$error_type")
+
+      # Prepare detailed message based on error type
+      local detailed_message=""
+      case "$error_type" in
+        "GRADLE")
+          detailed_message="🔧 *Loại lỗi:* Gradle Build Failure\n📋 *Nguyên nhân:* Lỗi khi package APK (PackageAndroidArtifact)\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory hoặc Gradle cache\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-1} lần\n  • Nếu vẫn fail, thử restart pipeline hoặc clean build"
+          ;;
+        "COMPILATION")
+          detailed_message="💻 *Loại lỗi:* Compilation Error\n📋 *Nguyên nhân:* Lỗi biên dịch C# code\n💡 *Khuyến nghị:*\n  • Kiểm tra code changes gần nhất\n  • Xem chi tiết lỗi trong log bên dưới\n  • Fix code và commit lại"
+          ;;
+        "APK_MISSING")
+          detailed_message="📦 *Loại lỗi:* APK File Missing\n📋 *Nguyên nhân:* Build thành công nhưng không tìm thấy APK\n💡 *Khuyến nghị:*\n  • Kiểm tra BuildScript.BuildAPK method\n  • Verify output path configuration"
+          ;;
+        *)
+          detailed_message="❓ *Loại lỗi:* Unknown Build Failure\n💡 *Khuyến nghị:* Kiểm tra full log để xác định nguyên nhân"
+          ;;
+      esac
+
+      # Send webhook notification with error type
       python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" build_type="${BUILD_TYPE}" version="${VERSION_INFO}" platform="Android";
+
+      # Send detailed DM to developer if NOTIFY_DEV is set
       if [ -n "$NOTIFY_DEV" ]; then
-        python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" notify_user="$NOTIFY_DEV" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}" log_file="$CI_PROJECT_DIR/build_output.log";
+        echo "Sending detailed error report to developer(s): $NOTIFY_DEV";
+
+        # Create temporary file with enhanced error details
+        local temp_error_file="/tmp/build_error_details_$$.txt"
+        {
+          echo "=== BUILD FAILURE DETAILS ===";
+          echo "";
+          echo "Error Type: $error_type";
+          echo "Error Context: $error_context";
+          echo "";
+          echo "=== ERROR SUMMARY ===";
+          echo "$error_summary";
+          echo "";
+          echo "=== RECOMMENDATIONS ===";
+          echo "$detailed_message" | sed 's/\\n/\n/g' | sed 's/\*//g';
+        } > "$temp_error_file"
+
+        # Send DM with enhanced details
+        python3 Assets/cicd/ci/send_slack_direct_message.py build_fail \
+          project_name="$PROJECT_NAME" \
+          notify_user="$NOTIFY_DEV" \
+          platform="Android" \
+          build_type="${BUILD_TYPE}" \
+          version="${VERSION_INFO}" \
+          log_file="$temp_error_file";
+
+        rm -f "$temp_error_file"
       else
         echo "NOTIFY_DEV not set, skipping direct message.";
       fi
+
+      echo "Build failure notifications sent.";
+    }
+
+  # Helper function to find and patch all Adjust.cs files with VERIFY_TOKEN block
+  - |
+    patch_adjust_cs() {
+      echo "========================================";
+      echo "Searching for Adjust.cs files to patch...";
+      echo "========================================";
+
+      # Array to store all found Adjust.cs files
+      ADJUST_FILES=()
+
+      # 1. Search in Library/PackageCache (package manager location)
+      echo "Searching in Library/PackageCache...";
+      while IFS= read -r file; do
+        [ -n "$file" ] && ADJUST_FILES+=("$file")
+      done < <(find Library/PackageCache -path "*/com.adjust.sdk@*/Scripts/Adjust.cs" 2>/dev/null)
+
+      # 2. Search in Assets/Adjust/Scripts (legacy location)
+      echo "Searching in Assets/Adjust/Scripts...";
+      if [ -f "Assets/Adjust/Scripts/Adjust.cs" ]; then
+        ADJUST_FILES+=("Assets/Adjust/Scripts/Adjust.cs")
+      fi
+
+      # 3. Search in any other location in Assets
+      echo "Searching in other Assets locations...";
+      while IFS= read -r file; do
+        # Skip if already in array
+        skip=0
+        for existing in "${ADJUST_FILES[@]}"; do
+          if [ "$file" = "$existing" ]; then
+            skip=1
+            break
+          fi
+        done
+        [ $skip -eq 0 ] && [ -n "$file" ] && ADJUST_FILES+=("$file")
+      done < <(find Assets -name "Adjust.cs" -type f 2>/dev/null | grep -v "Assets/Adjust/Scripts/Adjust.cs")
+
+      # Check if any files found
+      if [ ${#ADJUST_FILES[@]} -eq 0 ]; then
+        echo "⚠ WARNING: No Adjust.cs files found. Skipping patch.";
+        return 0
+      fi
+
+      echo "✓ Found ${#ADJUST_FILES[@]} Adjust.cs file(s):";
+      for file in "${ADJUST_FILES[@]}"; do
+        echo "  - $file";
+      done
+      echo "";
+
+      # Patch each file
+      local patched_count=0
+      local skipped_count=0
+
+      for ADJUST_CS in "${ADJUST_FILES[@]}"; do
+        echo "Processing: $ADJUST_CS";
+
+        # Check if already patched
+        if grep -q "#if VERIFY_TOKEN" "$ADJUST_CS"; then
+          echo "  ⊘ VERIFY_TOKEN block already present. Skipping.";
+          skipped_count=$((skipped_count + 1))
+          continue
+        fi
+
+        # Check if target line exists
+        if ! grep -q "if (!this\.startManually)" "$ADJUST_CS"; then
+          echo "  ⚠ Target line 'if (!this.startManually)' not found. Skipping.";
+          skipped_count=$((skipped_count + 1))
+          continue
+        fi
+
+        # Apply patch
+        awk '
+        BEGIN { inserted=0 }
+        {
+          if (!inserted && $0 ~ /if \(!this\.startManually\)/) {
+            match($0, /^[[:space:]]*/);
+            indent=substr($0, RSTART, RLENGTH);
+            print "#if VERIFY_TOKEN";
+            print indent "this.environment = AdjustEnvironment.Sandbox;";
+            print indent "this.logLevel = AdjustLogLevel.Verbose;";
+            print "#else";
+            print indent "this.environment = AdjustEnvironment.Production;";
+            print indent "this.logLevel = AdjustLogLevel.Error;";
+            print "#endif";
+            inserted=1;
+          }
+          print $0;
+        }' "$ADJUST_CS" > "$ADJUST_CS.tmp" && mv "$ADJUST_CS.tmp" "$ADJUST_CS"
+
+        if [ $? -eq 0 ]; then
+          echo "  ✓ Successfully patched!";
+          patched_count=$((patched_count + 1))
+        else
+          echo "  ✗ Failed to patch!";
+        fi
+      done
+
+      echo "";
+      echo "========================================";
+      echo "Patch Summary:";
+      echo "  Total files found: ${#ADJUST_FILES[@]}";
+      echo "  Successfully patched: $patched_count";
+      echo "  Skipped (already patched or no target): $skipped_count";
+      echo "========================================";
     }
 
 .send_notify_dev: &send_notify_dev
@@ -197,35 +428,8 @@ build_apk_and_verify:
     - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve > /dev/null 2>&1 || echo "Package resolution completed with warnings"
 
     # Patch Adjust.cs to insert VERIFY_TOKEN block before 'if (!this.startManually)'
-    - |
-      echo "Patching Adjust.cs with VERIFY_TOKEN block...";
-      ADJUST_CS=$(find Library/PackageCache -path "*/com.adjust.sdk@*/Scripts/Adjust.cs" | head -n 1);
-      if [ -z "$ADJUST_CS" ]; then
-        echo "Adjust.cs not found in Library/PackageCache. Skipping patch.";
-      else
-        echo "Found Adjust.cs at $ADJUST_CS";
-        if grep -q "#if VERIFY_TOKEN" "$ADJUST_CS"; then
-          echo "VERIFY_TOKEN block already present. Skipping insertion.";
-        else
-          awk '
-          BEGIN { inserted=0 }
-          {
-            if (!inserted && $0 ~ /if \(!this\.startManually\)/) {
-              match($0, /^[[:space:]]*/);
-              indent=substr($0, RSTART, RLENGTH);
-              print "#if VERIFY_TOKEN";
-              print indent "this.environment = AdjustEnvironment.Sandbox;";
-              print indent "this.logLevel = AdjustLogLevel.Verbose;";
-              print "#else";
-              print indent "this.environment = AdjustEnvironment.Production;";
-              print indent "this.logLevel = AdjustLogLevel.Error;";
-              print "#endif";
-              inserted=1;
-            }
-            print $0;
-          }' "$ADJUST_CS" > "$ADJUST_CS.tmp" && mv "$ADJUST_CS.tmp" "$ADJUST_CS";
-        fi
-      fi
+    # Using enhanced helper function that searches in multiple locations
+    - patch_adjust_cs
 
     # Patch ZegoAdjust.cs to force Sandbox environment and Verbose logging for token verification
     - |
@@ -434,35 +638,8 @@ build_apk_and_verify_manual:
     - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve > /dev/null 2>&1 || echo "Package resolution completed with warnings"
 
     # Patch Adjust.cs to insert VERIFY_TOKEN block before 'if (!this.startManually)'
-    - |
-      echo "Patching Adjust.cs with VERIFY_TOKEN block...";
-      ADJUST_CS=$(find Library/PackageCache -path "*/com.adjust.sdk@*/Scripts/Adjust.cs" | head -n 1);
-      if [ -z "$ADJUST_CS" ]; then
-        echo "Adjust.cs not found in Library/PackageCache. Skipping patch.";
-      else
-        echo "Found Adjust.cs at $ADJUST_CS";
-        if grep -q "#if VERIFY_TOKEN" "$ADJUST_CS"; then
-          echo "VERIFY_TOKEN block already present. Skipping insertion.";
-        else
-          awk '
-          BEGIN { inserted=0 }
-          {
-            if (!inserted && $0 ~ /if \(!this\.startManually\)/) {
-              match($0, /^[[:space:]]*/);
-              indent=substr($0, RSTART, RLENGTH);
-              print "#if VERIFY_TOKEN";
-              print indent "this.environment = AdjustEnvironment.Sandbox;";
-              print indent "this.logLevel = AdjustLogLevel.Verbose;";
-              print "#else";
-              print indent "this.environment = AdjustEnvironment.Production;";
-              print indent "this.logLevel = AdjustLogLevel.Error;";
-              print "#endif";
-              inserted=1;
-            }
-            print $0;
-          }' "$ADJUST_CS" > "$ADJUST_CS.tmp" && mv "$ADJUST_CS.tmp" "$ADJUST_CS";
-        fi
-      fi
+    # Using enhanced helper function that searches in multiple locations
+    - patch_adjust_cs
 
     # Patch ZegoAdjust.cs to force Sandbox environment and Verbose logging for token verification
     - |
@@ -835,17 +1012,68 @@ build_apk_by_tag:
     - touch $CI_PROJECT_DIR/build_output.log
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
     - start=$(date +%s)
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
-        send_build_failure_notification
+
+    # Unity build with automatic retry on Gradle failures
+    # This handles intermittent PackageAndroidArtifact failures by retrying immediately with existing cache
+    # MAX_RETRY_ATTEMPTS=1 means: 1 initial build + 1 retry = 2 total attempts
+    - |
+      MAX_RETRY_ATTEMPTS=1
+      BUILD_ATTEMPT=0
+      BUILD_SUCCESS=false
+      MAX_TOTAL_ATTEMPTS=$((MAX_RETRY_ATTEMPTS + 1))
+
+      while [ $BUILD_ATTEMPT -lt $MAX_TOTAL_ATTEMPTS ]; do
+        BUILD_ATTEMPT=$((BUILD_ATTEMPT + 1))
+        echo "========================================";
+        echo "Unity build attempt $BUILD_ATTEMPT of $MAX_TOTAL_ATTEMPTS";
+        echo "========================================";
+
+        if $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit; then
+          echo "✓ Unity build succeeded on attempt $BUILD_ATTEMPT";
+          BUILD_SUCCESS=true
+          break
+        else
+          BUILD_EXIT_CODE=$?
+          echo "✗ Unity build failed on attempt $BUILD_ATTEMPT with exit code $BUILD_EXIT_CODE";
+
+          # Check if this is a Gradle-related failure
+          if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed" $CI_PROJECT_DIR/build_output.log; then
+            echo "⚠ Detected Gradle build failure in logs";
+
+            if [ $BUILD_ATTEMPT -lt $MAX_TOTAL_ATTEMPTS ]; then
+              echo "⟳ Retrying build immediately (using existing Gradle cache)...";
+              echo "Waiting 5 seconds before retry...";
+              sleep 5;
+              continue
+            else
+              echo "✗ Max retries reached ($MAX_RETRY_ATTEMPTS retry after initial build). Build failed.";
+              # Gradle failure after exhausting all retries
+              send_build_failure_notification "GRADLE_RETRY_EXHAUSTED"
+              exit 1;
+            fi
+          else
+            echo "✗ Non-Gradle failure detected. Not retrying.";
+            # Non-Gradle failure (likely compilation error)
+            send_build_failure_notification "COMPILATION_ERROR"
+            exit 1;
+          fi
+        fi
+      done
+
+      if [ "$BUILD_SUCCESS" = false ]; then
+        echo "✗ Build failed after $MAX_TOTAL_ATTEMPTS total attempts (1 initial + $MAX_RETRY_ATTEMPTS retry)";
+        # This should not be reached, but handle it anyway
+        send_build_failure_notification "BUILD_FAILED_UNKNOWN"
         exit 1;
-      }
+      fi
+
     - end=$(date +%s)
     - echo "Time taken... $((end-start)) seconds"
     - echo "Checking APK and directory contents after build..."
     - ls -l Build/Android/
     - if [ ! -f "Build/Android/${APK_NAME}" ]; then
         echo "Error... APK file not found. Build failed.";
-        send_build_failure_notification
+        send_build_failure_notification "APK_FILE_MISSING"
         exit 1;
       else
         echo "APK build succeeded.";
@@ -887,7 +1115,7 @@ build_apk_by_tag:
         python3 Assets/cicd/ci/upload_slack.py "Build/Android/${APK_NAME}" "$FULL_CHANGELOG" "$SLACK_USER_IDS";
       else
         echo "Error... No APK found for upload.";
-        send_build_failure_notification
+        send_build_failure_notification "APK_UPLOAD_MISSING"
         exit 1;
       fi
 
