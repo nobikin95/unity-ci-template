@@ -362,6 +362,15 @@ build_ios_release:
           > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
         echo "✅ Archive completed successfully"
 
+        # Fix nested frameworks in archive
+        echo "🔧 Fixing nested frameworks in archive..."
+        chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh"
+        "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh" "$ARCHIVE_PATH" || {
+          echo "❌ Failed to fix nested frameworks"
+          handle_xcode_error "Nested frameworks fix failed" "$ARCHIVE_LOG_PATH"
+        }
+        echo "✅ Nested frameworks fixed"
+
         echo "Exporting archive with automatic signing..."
         if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" ]; then
            handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
@@ -389,6 +398,15 @@ build_ios_release:
           -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
           > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
         echo "✅ Archive completed successfully"
+
+        # Fix nested frameworks in archive
+        echo "🔧 Fixing nested frameworks in archive..."
+        chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh"
+        "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh" "$ARCHIVE_PATH" || {
+          echo "❌ Failed to fix nested frameworks"
+          handle_xcode_error "Nested frameworks fix failed" "$ARCHIVE_LOG_PATH"
+        }
+        echo "✅ Nested frameworks fixed"
 
         echo "Exporting archive with automatic signing..."
         if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" ]; then
@@ -635,6 +653,15 @@ build_ios_ipa:
           > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
         echo "✅ Archive completed successfully"
 
+        # Fix nested frameworks in archive
+        echo "🔧 Fixing nested frameworks in archive..."
+        chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh"
+        "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh" "$ARCHIVE_PATH" || {
+          echo "❌ Failed to fix nested frameworks"
+          handle_xcode_error "Nested frameworks fix failed" "$ARCHIVE_LOG_PATH"
+        }
+        echo "✅ Nested frameworks fixed"
+
         echo "Exporting archive with automatic signing..."
 
         if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
@@ -685,6 +712,15 @@ build_ios_ipa:
           -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
           > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
         echo "✅ Archive completed successfully"
+
+        # Fix nested frameworks in archive
+        echo "🔧 Fixing nested frameworks in archive..."
+        chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh"
+        "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh" "$ARCHIVE_PATH" || {
+          echo "❌ Failed to fix nested frameworks"
+          handle_xcode_error "Nested frameworks fix failed" "$ARCHIVE_LOG_PATH"
+        }
+        echo "✅ Nested frameworks fixed"
 
         echo "Exporting archive with automatic signing..."
 
