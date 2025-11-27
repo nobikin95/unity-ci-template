@@ -639,11 +639,10 @@ build_apk_and_verify:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwdom
+    - *disable_app_binary
 
     - *setup_screwdom
-
-    # Configure APK build without OBB (gộp data vào APK)
-    - *disable_app_binary
 
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
@@ -855,10 +854,10 @@ build_apk_and_verify_manual:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
-    - *setup_screwdom
-
-    # Configure APK build without OBB (gộp data vào APK)
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwdom
     - *disable_app_binary
+
+    - *setup_screwdom
 
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
@@ -1230,10 +1229,10 @@ build_apk_by_tag:
     - echo "Final CHANGELOG:"
     - echo "$FULL_CHANGELOG"
 
-    - *setup_screwdom
-
-    # Configure APK build without OBB (gộp data vào APK)
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwdom
     - *disable_app_binary
+
+    - *setup_screwdom
 
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
@@ -1389,11 +1388,10 @@ build_self_test:
     - if: '$CI_COMMIT_TAG =~ /^self_test(_[A-Z0-9]+)?$/'
       when: on_success
   script:
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwdom
+    - *disable_app_binary
   
     - *setup_screwdom
-
-    # Configure APK build without OBB (gộp data vào APK)
-    - *disable_app_binary
 
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
