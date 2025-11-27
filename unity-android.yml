@@ -642,6 +642,9 @@ build_apk_and_verify:
 
     - *setup_screwdom
 
+    # Configure APK build without OBB (gộp data vào APK)
+    - *disable_app_binary
+
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
     - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
@@ -853,6 +856,9 @@ build_apk_and_verify_manual:
       when: manual
   script:
     - *setup_screwdom
+
+    # Configure APK build without OBB (gộp data vào APK)
+    - *disable_app_binary
 
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
@@ -1121,6 +1127,9 @@ build_aab:
 
     - *setup_screwdom
 
+    # Configure AAB build with OBB (chia OBB riêng cho Google Play)
+    - *setup_build_obb
+
     # Build AAB
     - mkdir -p Build/Android;
     - export AAB_NAME="${PROJECT_NAME}_bundle_${AAB_VERSION}_version_${CURRENT_VERSION}.aab";
@@ -1222,6 +1231,9 @@ build_apk_by_tag:
     - echo "$FULL_CHANGELOG"
 
     - *setup_screwdom
+
+    # Configure APK build without OBB (gộp data vào APK)
+    - *disable_app_binary
 
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
@@ -1380,6 +1392,9 @@ build_self_test:
   
     - *setup_screwdom
 
+    # Configure APK build without OBB (gộp data vào APK)
+    - *disable_app_binary
+
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
     - echo "$APK_NAME" > apk_name.txt
@@ -1486,7 +1501,10 @@ check_build_failure:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
       when: on_success
-  script:      
+  script:
+    # Configure APK build without OBB (gộp data vào APK)
+    - *disable_app_binary
+    
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
     - echo "$APK_NAME" > apk_name.txt
