@@ -14,6 +14,8 @@ variables:
     Assets/3D Arts/Meshes
 
 .common_before_script: &common_before_script
+  - NOTIFY_DEV="U043T5P1G9Z"
+  - SLACK_CHANNEL_ID="C07UU3A6H0R"
   - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
   # Clone Assets/cicd to latest version (non-recursive)
@@ -497,7 +499,7 @@ variables:
 .setup_screwdom: &setup_screwdom
   # --- 1: Build Addressables with Play Asset Delivery ---
   - echo "========================================"
-  - echo "Step 1: Building Addressables with Play Asset Delivery..."
+  - echo "Step 1 Building Addressables with Play Asset Delivery..."
   - echo "========================================"
   - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -buildTarget Android -executeMethod BuildScript.BuildAddressablesWithPAD -logFile $CI_PROJECT_DIR/addressables_build_log.txt || {
       echo "Error>> Addressable build with Play Asset Delivery failed.";
@@ -507,7 +509,7 @@ variables:
 
   # --- 2: Deleting folders before build ---
   - echo "========================================"
-  - echo "Step 2: Deleting folders before build..."
+  - echo "Step 2 Deleting folders before build..."
   - echo "========================================"
   - chmod +x Assets/cicd/ci/delete_folders.sh
   - Assets/cicd/ci/delete_folders.sh
@@ -515,7 +517,7 @@ variables:
 
   # --- 3: Resolve Packages---
   - echo "========================================"
-  - echo "Step 3: Resolving packages..."
+  - echo "Step 3 Resolving packages..."
   - echo "========================================"
   - echo "Resolving packages..."
   - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -executeMethod BuildScript.ResolvePackage -logFile $CI_PROJECT_DIR/resolve_log.txt -quit || {
@@ -526,7 +528,7 @@ variables:
 
   # --- 4: Remove com.unity.ads from manifest.json ---
   - echo "========================================"
-  - echo "Step 4: Removing com.unity.ads from packages..."
+  - echo "Step 4 Removing com.unity.ads from packages..."
   - echo "========================================"
   - sed -i '/"com.unity.ads"/d' Packages/manifest.json
   - echo "✓ Removed com.unity.ads from manifest.json"
@@ -992,35 +994,28 @@ build_aab:
   
   script:
     - export MESSAGE_TEMPLATES_FILE="Assets/cicd/ci/message_templates.json"
+    - export template_key="build_start"
+    - export message=$(jq -r --arg key "$template_key" '.[$key]' "$MESSAGE_TEMPLATES_FILE")
     - |
-      template_key="build_start" 
-      message=$(jq -r --arg key "$template_key" '.[$key]' "$MESSAGE_TEMPLATES_FILE")
-
       if [ -z "$message" ] || [ "$message" == "null" ]; then
         echo "[ERROR] Message template not found for key: $template_key"
         exit 1
       fi
-
-      formatted_message=$(echo  "$message" | sed -e "s/{project_name}/${PROJECT_NAME}/g" -e "s/{platform}/Android_AAB/g" -e "s/{build_type}/${BUILD_TYPE}/g" -e "s/{version}/${VERSION_INFO}/g")
-  
+    - export formatted_message=$(echo "$message" | sed -e "s/{project_name}/${PROJECT_NAME}/g" -e "s/{platform}/Android_AAB/g" -e "s/{build_type}/${BUILD_TYPE}/g" -e "s/{version}/${VERSION_INFO}/g")
     - python3 Assets/cicd/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
     # Fetch changelog for release tags on release branch
+    - chmod +x Assets/cicd/ci/fetch_changelog.sh || true
     - |
       if [[ "$CI_COMMIT_TAG" =~ ^release/bundle.*$ && "$CI_BRANCH" == "release" ]]; then
-        echo "Detected release tag on release branch. Fetching changelog...";
-        chmod +x Assets/cicd/ci/fetch_changelog.sh;
-        Assets/cicd/ci/fetch_changelog.sh --target_branch=release;
-        export CHANGELOG=$(cat changelog.tmp);
+        echo "Detected release tag on release branch. Fetching changelog..."
+        Assets/cicd/ci/fetch_changelog.sh --target_branch=release
+        export CHANGELOG=$(cat changelog.tmp)
       else
         echo "Extracting changelog from tag..."
-        if [ -z "$CI_COMMIT_TAG" ]; then
-          echo "Error: CI_COMMIT_TAG is not set. Exiting..."
-        fi
+        [ -z "$CI_COMMIT_TAG" ] && echo "Error: CI_COMMIT_TAG is not set. Exiting..." || true
         echo "Tag detected: $CI_COMMIT_TAG"
         export CHANGELOG=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG")
-        if [ -z "$CHANGELOG" ]; then
-          echo "No changelog found for tag $CI_COMMIT_TAG. Exiting..."
-        fi
+        [ -z "$CHANGELOG" ] && echo "No changelog found for tag $CI_COMMIT_TAG. Exiting..." || true
         echo "Changelog extracted:"
         echo "$CHANGELOG"
       fi
@@ -1033,17 +1028,14 @@ build_aab:
     - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
 
     # Clear Library directory
-    - if [ -d "./Library" ]; then
-        echo "Clearing ./Library directory...";
-        if rm -rf "./Library/"*; then
-          echo "Successfully cleared ./Library directory.";
-        else
-          echo "Failed to clear ./Library directory. Please check permissions.";
-        fi;
-        echo "Contents of ./Library after clearing (if any):";
-        ls "./Library";
+    - |
+      if [ -d "./Library" ]; then
+        echo "Clearing ./Library directory..."
+        rm -rf "./Library/"* || echo "Failed to clear ./Library directory. Please check permissions."
+        echo "Contents of ./Library after clearing (if any):"
+        ls "./Library" || echo "Directory is empty"
       else
-        echo "./Library directory not found or not accessible.";
+        echo "./Library directory not found or not accessible."
       fi
 
     # Update AndroidBundleVersionCode in ProjectSettings.asset
@@ -1051,7 +1043,42 @@ build_aab:
     - echo "Updated AndroidBundleVersionCode in ProjectSettings.asset to $AAB_VERSION"
     - grep "AndroidBundleVersionCode:" ProjectSettings/ProjectSettings.asset
 
-    - *setup_screwdom
+    # --- Build Addressables with Play Asset Delivery ---
+    - echo "========================================"
+    - echo "Step 1 Building Addressables with Play Asset Delivery..."
+    - echo "========================================"
+    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -buildTarget Android -executeMethod BuildScript.BuildAddressablesWithPAD -logFile $CI_PROJECT_DIR/addressables_build_log.txt || (echo "Error>> Addressable build with Play Asset Delivery failed." && exit 1)
+    - echo "✓ Addressable build with Play Asset Delivery completed"
+
+    # --- Deleting folders before build ---
+    - echo "========================================"
+    - echo "Step 2 Deleting folders before build..."
+    - echo "========================================"
+    - chmod +x Assets/cicd/ci/delete_folders.sh
+    - Assets/cicd/ci/delete_folders.sh
+    - echo "✓ Folder deletion completed"
+
+    # --- Resolve Packages---
+    - echo "========================================"
+    - echo "Step 3 Resolving packages..."
+    - echo "========================================"
+    - echo "Resolving packages..."
+    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -executeMethod BuildScript.ResolvePackage -logFile $CI_PROJECT_DIR/resolve_log.txt -quit || (echo "Error>> Package Manager resolve failed." && exit 1)
+    - echo "✓ Package resolution completed"
+
+    # --- Remove com.unity.ads from manifest.json ---
+    - echo "========================================"
+    - echo "Step 4 Removing com.unity.ads from packages..."
+    - echo "========================================"
+    - sed -i '/"com.unity.ads"/d' Packages/manifest.json
+    - echo "✓ Removed com.unity.ads from manifest.json"
+    - cp Packages/packages-lock.json Packages/packages-lock.json.bak
+    - jq 'del(.dependencies["com.unity.ads"])' Packages/packages-lock.json > tmp.json && mv tmp.json Packages/packages-lock.json
+    - echo "✓ Removed com.unity.ads from packages-lock.json"
+    - echo "========================================"
+    - echo "✓ setup_screwdom completed successfully"
+    - echo "========================================"
+
     # Build AAB
     - mkdir -p Build/Android;
     - export AAB_NAME="${PROJECT_NAME}_bundle_${AAB_VERSION}_version_${CURRENT_VERSION}.aab";
@@ -1060,20 +1087,17 @@ build_aab:
     - touch $CI_PROJECT_DIR/build_output.log
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
     # Unity build with automatic retry on Gradle failures
-    - retry_unity_build_with_gradle_detection "BuildScript.BuildAAB" "Build/Android/${AAB_NAME}" "AAB" || {
-        echo "Error... Unity build failed after retries.";
-        exit 1;
-      }
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAAB" "Build/Android/${AAB_NAME}" "AAB" || exit 1
     
     - echo "Checking AAB and directory contents after build..."
     - ls -l Build/Android/
-    - if [ ! -f "Build/Android/${AAB_NAME}" ]; then
-        echo "Error ... AAB file not found. Build failed.";
+    - |
+      if [ ! -f "Build/Android/${AAB_NAME}" ]; then
+        echo "Error ... AAB file not found. Build failed."
         send_build_failure_notification "AAB_FILE_MISSING"
-        exit 1;
-      else
-        echo "AAB build succeeded.";
+        exit 1
       fi
+      echo "AAB build succeeded."
 
     - echo "Copying AAB and symbols file to storage directory..."
     - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/AAB/"
@@ -1085,11 +1109,12 @@ build_aab:
     - echo "AAB copied to ${STORAGE_PATH}"
     - echo "${STORAGE_PATH}/${AAB_NAME}" > aab_path.txt
     - symbols_file=$(find Build/Android -name "*.symbols.zip" | head -n 1)
-    - if [ -n "$symbols_file" ]; then 
-        cp "$symbols_file" "${STORAGE_PATH}/";
-        echo "Symbols file copied to ${STORAGE_PATH}";
-      else 
-        echo "No symbols file found to copy.";
+    - |
+      if [ -n "$symbols_file" ]; then
+        cp "$symbols_file" "${STORAGE_PATH}/"
+        echo "Symbols file copied to ${STORAGE_PATH}"
+      else
+        echo "No symbols file found to copy."
       fi
 
     - export PATCH_VERSION=0
