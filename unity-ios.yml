@@ -6,96 +6,12 @@ variables:
   - git clean -fdx
   - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
-  - git submodule update --init --recursive --checkout
+  # Clone Assets/cicd to latest version (non-recursive)
+  - git submodule update --init --remote --checkout Assets/cicd
+  # Clone all other submodules recursively (exclude Assets/cicd)
+  - git config --file .gitmodules --get-regexp path | awk '$2 != "Assets/cicd" {print $2}' | xargs -r -I {} git submodule update --init --recursive --checkout {}
   - git submodule foreach 'git reset --hard'
   - git submodule foreach 'git clean -fdx'
-  
-  # Setup iOS automatic signing - Simplified version
-  - |
-    echo "🤖 Setting up iOS Automatic Signing..."
-    echo "======================================"
-
-    # Verify required environment variables
-    if [ -z "$IOS_DEVELOPMENT_TEAM" ]; then
-      echo "❌ Error: IOS_DEVELOPMENT_TEAM not set"
-      exit 1
-    fi
-
-    echo "✅ Team ID: $IOS_DEVELOPMENT_TEAM"
-    echo "✅ Bundle ID: com.dino.weapon.backpack"
-    echo "✅ Signing Style: Automatic"
-    echo "✅ Export Method: Ad-Hoc"
-    echo "✅ Using Xcode automatic signing capabilities"
-
-    # Check available certificates for automatic signing
-    CERT_COUNT=$(security find-identity -v -p codesigning | grep -c "iPhone Distribution\|Apple Distribution" 2>/dev/null || echo "0")
-    if [ "$CERT_COUNT" -gt 0 ]; then
-      echo "✅ Found $CERT_COUNT distribution certificate(s) for automatic signing"
-      security find-identity -v -p codesigning | grep "iPhone Distribution\|Apple Distribution" | head -3
-    else
-      echo "⚠️  No distribution certificates found - automatic signing may fail"
-      echo "Available certificates:"
-      security find-identity -v -p codesigning | head -5 || echo "None found"
-      echo ""
-      echo "💡 To fix this:"
-      echo "   1. Install Distribution Certificate manually on GitLab runner"
-      echo "   2. Or add Apple ID credentials for automatic profile management"
-    fi
-
-    # Add Apple ID credentials check for automatic profile creation
-    if [ -n "$APPLE_ID" ] && [ -n "$APPLE_ID_PASSWORD" ]; then
-      echo "✅ Apple ID credentials available for automatic profile management"
-      echo "   Apple ID: $APPLE_ID"
-    else
-      echo "⚠️  Apple ID credentials not set"
-      echo "   For automatic profile creation, add GitLab variables:"
-      echo "   • APPLE_ID: your-apple-id@example.com"
-      echo "   • APPLE_ID_PASSWORD: your-app-specific-password"
-    fi
-
-    # Force refresh Xcode caches
-    echo ""
-    echo "🔄 Refreshing Xcode Caches..."
-    echo "============================="
-
-    # Kill any running Xcode processes
-    killall -9 Xcode 2>/dev/null || true
-    killall -9 xcodebuild 2>/dev/null || true
-
-    # Clear Xcode derived data
-    rm -rf ~/Library/Developer/Xcode/DerivedData/* 2>/dev/null || true
-
-    # Shutdown simulators
-    xcrun simctl shutdown all 2>/dev/null || true
-
-    echo "✅ Xcode caches refreshed"
-
-    # Pre-export validation
-    echo ""
-    echo "🔍 Pre-Export Validation:"
-    echo "========================="
-
-    AVAILABLE_CERTS=$(security find-identity -v -p codesigning | grep -c "iPhone Distribution\|Apple Distribution" 2>/dev/null || echo "0")
-    echo "• Distribution Certificates: $AVAILABLE_CERTS"
-
-    if [ "$AVAILABLE_CERTS" -gt 0 ]; then
-        echo "✅ Prerequisites met for automatic signing export"
-    else
-        echo "⚠️  Missing prerequisites - export may fail"
-    fi
-
-    echo ""
-    echo "🎯 Automatic signing setup completed"
-    echo ""
-    echo "📋 Final Configuration Summary:"
-    echo "=============================="
-    echo "• Export Method: release-testing (Ad-Hoc)"
-    echo "• Signing Style: automatic"
-    echo "• Team ID: $IOS_DEVELOPMENT_TEAM"
-    echo "• Bundle ID: com.dino.weapon.backpack"
-    echo "• Distribution Certificates: $AVAILABLE_CERTS available"
-    echo "• Expected: Xcode will use automatic signing with available certificates"
-
   - echo "Setting up environment for iOS build..."
   - export PROJECT_UNITY_VERSION=$(grep "m_EditorVersion:" ProjectSettings/ProjectVersion.txt | awk '{print $2}')
   - echo "Unity version from ProjectSettings ${PROJECT_UNITY_VERSION}"
@@ -300,7 +216,7 @@ build_ios_release:
         exit 1
       }
   retry:
-    max: 2
+    max: 1
     when:
       - runner_system_failure
       - stuck_or_timeout_failure
@@ -313,6 +229,8 @@ build_ios_release:
   rules:
     - if: '$CI_COMMIT_TAG =~ /^ios-release\/bundle.*$/'
       when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   script:
     - *common_build_steps
 
@@ -338,7 +256,9 @@ build_ios_release:
 
           if [[ -n "$MR_DESCRIPTION" && "$MR_DESCRIPTION" != "null" && "$MR_DESCRIPTION" =~ "## Change Log" ]]; then
             echo "Found Change Log section in merge request description."
-            CHANGELOG=$(echo "$MR_DESCRIPTION" | sed -n '/## Change Log/,/## Commits/{/## Commits/q;p}')
+            # Extract changelog between "## Change Log" and next section (starting with ##)
+            # Using awk for better compatibility with both GNU sed (Linux) and BSD sed (macOS)
+            CHANGELOG=$(echo "$MR_DESCRIPTION" | awk '/## Change Log/,/^## [^C]/ {if (/^## [^C]/) exit; print}')
 
             # Get merger info
             MERGER_NAME=$(echo "$MERGE_REQUEST_INFO" | jq -r '.merged_by.name')
@@ -421,11 +341,11 @@ build_ios_release:
 
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
-    
+
     # Check and create workspace if needed
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
-    
+
     - | # Use block scalar for the entire multi-line if/then/else/fi block
       if [ -d "Unity-iPhone.xcworkspace" ]; then
         echo "Found Xcode workspace. Building with xcodebuild...";
@@ -443,12 +363,12 @@ build_ios_release:
         echo "✅ Archive completed successfully"
 
         echo "Exporting archive with automatic signing..."
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
-           handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" ]; then
+           handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
         fi
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
-          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" \
           -allowProvisioningUpdates \
           -quiet \
           > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
@@ -471,12 +391,12 @@ build_ios_release:
         echo "✅ Archive completed successfully"
 
         echo "Exporting archive with automatic signing..."
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist.plist" ]; then
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" ]; then
            handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR"
         fi
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Release" \
-          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist.plist" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" \
           -allowProvisioningUpdates \
           -quiet \
           > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
@@ -486,6 +406,62 @@ build_ios_release:
       else
         handle_xcode_error "No Xcode workspace or project found in Build/iOS."
       fi
+
+    # Upload IPA to TestFlight using Fastlane
+    - cd "$CI_PROJECT_DIR"
+    - echo "=================================================="
+    - echo "📤 Uploading IPA to TestFlight using Fastlane..."
+    - echo "=================================================="
+
+    # Verify IPA file exists
+    - |
+      IPA_FILE=$(find Build/iOS/ExportedIPA_Release -name "*.ipa" | head -1)
+      if [ -z "$IPA_FILE" ]; then
+        handle_xcode_error "No IPA file found in Build/iOS/ExportedIPA_Release"
+      fi
+      echo "Found IPA file: $IPA_FILE"
+      IPA_SIZE=$(ls -lh "$IPA_FILE" | awk '{print $5}')
+      echo "IPA file size: $IPA_SIZE"
+
+    # Setup Fastlane
+    - echo "Setting up Fastlane configuration..."
+    - mkdir -p fastlane
+    - cp Assets/cicd/ci/deploy/Fastfile fastlane/Fastfile
+
+    # Verify required environment variables
+    - |
+      if [ -z "$APP_STORE_KEY_BASE64" ]; then
+        handle_xcode_error "APP_STORE_KEY_BASE64 environment variable is not set"
+      fi
+      if [ -z "$APP_STORE_KEY_ID" ]; then
+        handle_xcode_error "APP_STORE_KEY_ID environment variable is not set"
+      fi
+      if [ -z "$APP_STORE_ISSUER_ID" ]; then
+        handle_xcode_error "APP_STORE_ISSUER_ID environment variable is not set"
+      fi
+      echo "✅ All required environment variables are set"
+      echo "🔍 Debug: APP_STORE_KEY_ID = $APP_STORE_KEY_ID"
+      echo "🔍 Debug: APP_STORE_ISSUER_ID = $APP_STORE_ISSUER_ID"
+      echo "🔍 Debug: APP_STORE_KEY_BASE64 length = ${#APP_STORE_KEY_BASE64}"
+
+    # Export environment variables for Fastlane (explicitly export all required vars)
+    - export APP_STORE_KEY_BASE64="$APP_STORE_KEY_BASE64"
+    - export APP_STORE_KEY_ID="$APP_STORE_KEY_ID"
+    - export APP_STORE_ISSUER_ID="$APP_STORE_ISSUER_ID"
+    - export FASTLANE_SKIP_INTERACTIVE=1
+    - export FASTLANE_HIDE_TIMESTAMP=1
+
+    # Run Fastlane upload
+    - echo "Starting Fastlane upload to TestFlight..."
+    - |
+      if fastlane upload_testflight 2>&1 | tee fastlane_upload.log; then
+        echo "✅ Successfully uploaded IPA to TestFlight!"
+      else
+        echo "❌ Fastlane upload failed. Check fastlane_upload.log for details."
+        tail -n 100 fastlane_upload.log
+        handle_xcode_error "Fastlane upload to TestFlight failed" "fastlane_upload.log"
+      fi
+
     - cd "$CI_PROJECT_DIR"
     - *common_update_version
 
@@ -530,12 +506,54 @@ build_ios_release:
     - python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_message.py" "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
 
   after_script:
+    # Ensure we're in the correct working directory
+    - echo "📍 Ensuring correct working directory..."
+    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - echo "✅ Current directory $(pwd)"
+
+    # Wait for file system sync (important on macOS APFS)
+    - echo "⏳ Waiting for file system sync..."
+    - sleep 3
+    - sync
+
+    # Debug: Display directory structure
+    - echo "🔍 Project directory structure:"
+    - echo "   - CI_PROJECT_DIR $CI_PROJECT_DIR"
+    - echo "   - Current PWD $(pwd)"
+    - echo "   - Disk usage:"
+    - du -sh "$CI_PROJECT_DIR" 2>/dev/null || echo "Cannot calculate size"
+    - |
+      echo "   - Top-level contents:"
+      ls -lah "$CI_PROJECT_DIR" | head -20 || echo "Cannot list directory"
+    - |
+      if [ -d "$CI_PROJECT_DIR/Build/iOS" ]; then
+        echo "   - Build/iOS contents:"
+        ls -lah "$CI_PROJECT_DIR/Build/iOS" | head -20 || echo "Cannot list Build/iOS"
+      else
+        echo "   - Build/iOS directory does not exist"
+      fi
+
+    # Verify external disk
+    - echo ""
     - echo "🔍 Verifying external disk before backup..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
-    - echo "🔧 Starting iOS build backup with enhanced verification..."
+
+    # Start backup process
+    - echo ""
+    - echo "🔧 Starting full project backup with enhanced verification..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
+
+  artifacts:
+    paths:
+      - build_output.log
+      - archive_release.log
+      - export_release.log
+      - fastlane_upload.log
+      - fastlane/
+    when: always
+    expire_in: 1 days
 
 build_ios_ipa:
   stage: build_ios
@@ -561,7 +579,7 @@ build_ios_ipa:
         exit 1
       }
   retry:
-    max: 2
+    max: 1
     when:
       - runner_system_failure
       - stuck_or_timeout_failure
@@ -596,11 +614,11 @@ build_ios_ipa:
 
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
-    
+
     # Check and create workspace if needed
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
-    
+
     - | # Use block scalar for multi-line if statement
       if [ -d "Unity-iPhone.xcworkspace" ]; then
         echo "Found Xcode workspace. Building with xcodebuild...";
@@ -609,6 +627,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
+        echo "🔥 Building với -FIRDebugEnabled flag (đã được thêm vào Info.plist)..."
         xcodebuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
@@ -619,19 +638,19 @@ build_ios_ipa:
 
         echo "Exporting archive with automatic signing..."
 
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
-          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" ]; then
+          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
         fi
 
         # Simple export with automatic signing
-        echo "🎯 Exporting with automatic signing..."
+        echo "🎯 Exporting with development method (có thể cài trên máy macOS khác)..."
         OUTPUT_DIR="$CI_PROJECT_DIR/Build/iOS"
         mkdir -p "$OUTPUT_DIR"
 
         if xcodebuild -exportArchive \
             -archivePath "$ARCHIVE_PATH" \
             -exportPath "$OUTPUT_DIR/ExportedIPA_Dev" \
-            -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
+            -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" \
             -allowProvisioningUpdates \
             > "$EXPORT_LOG_PATH" 2>&1; then
 
@@ -660,6 +679,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
+        echo "🔥 Building với -FIRDebugEnabled flag (đã được thêm vào Info.plist)..."
         xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
@@ -670,13 +690,14 @@ build_ios_ipa:
 
         echo "Exporting archive with automatic signing..."
 
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
-          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" ]; then
+          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
         fi
 
+        echo "🎯 Exporting with development method (có thể cài trên máy macOS khác)..."
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Dev" \
-          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" \
           -allowProvisioningUpdates \
           -quiet \
           > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
@@ -702,9 +723,74 @@ build_ios_ipa:
     - *common_update_version
 
   after_script:
+    # Ensure we're in the correct working directory
+    - echo "📍 Ensuring correct working directory..."
+    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - echo "✅ Current directory $(pwd)"
+
+    # Wait for file system sync (important on macOS APFS)
+    - echo "⏳ Waiting for file system sync..."
+    - sleep 3
+    - sync
+
+    # Debug: Display directory structure
+    - echo "🔍 Project directory structure:"
+    - echo "   - CI_PROJECT_DIR $CI_PROJECT_DIR"
+    - echo "   - Current PWD $(pwd)"
+    - echo "   - Disk usage:"
+    - du -sh "$CI_PROJECT_DIR" 2>/dev/null || echo "Cannot calculate size"
+    - |
+      echo "   - Top-level contents:"
+      ls -lah "$CI_PROJECT_DIR" | head -20 || echo "Cannot list directory"
+    - |
+      if [ -d "$CI_PROJECT_DIR/Build/iOS" ]; then
+        echo "   - Build/iOS contents:"
+        ls -lah "$CI_PROJECT_DIR/Build/iOS" | head -20 || echo "Cannot list Build/iOS"
+      else
+        echo "   - Build/iOS directory does not exist"
+      fi
+
+    # Verify external disk
+    - echo ""
     - echo "🔍 Verifying external disk before backup..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/verify_external_disk.sh"
-    - echo "🔧 Starting iOS build backup with enhanced verification..."
+
+    # Start backup process
+    - echo ""
+    - echo "🔧 Starting full project backup with enhanced verification..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
+
+
+
+build_xcode_project:
+  stage: build_self_test
+  before_script:
+    - export BUILD_TYPE="Xcode Project"
+    - *common_before_script
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+      - script_failure
+  tags:
+    - macos
+  timeout: 60m
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /ios-xcode/'
+      when: manual
+  script:
+    - *common_build_steps
+    - echo "✅ Xcode project build completed successfully!"
+    - echo "📁 Xcode project location Build/iOS/Unity-iPhone.xcodeproj"
+    - |
+      if [ -d "Build/iOS/Unity-iPhone.xcodeproj" ]; then
+        echo "✅ Xcode project verified at Build/iOS/Unity-iPhone.xcodeproj"
+      else
+        echo "❌ Xcode project not found!"
+        exit 1
+      fi
