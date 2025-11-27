@@ -23,12 +23,27 @@ variables:
   # Force update to latest version from branch screwdom
   - |
     cd Assets/cicd
-    git fetch origin --depth=1
-    git fetch origin screwdom --depth=1 || git fetch origin --depth=1
     CURRENT_COMMIT=$(git rev-parse HEAD)
     echo "Current commit before update: $CURRENT_COMMIT"
+    # Fetch all branches and tags to ensure we have latest
+    git fetch origin --unshallow 2>/dev/null || git fetch origin
+    git fetch origin screwdom || git fetch origin
+    # Checkout screwdom branch
     git checkout screwdom || git checkout -b screwdom origin/screwdom || echo "Branch screwdom may not exist, using default"
-    git pull origin screwdom --ff-only || git reset --hard origin/screwdom || echo "Pull/reset failed, continuing..."
+    # Get latest commit from remote
+    REMOTE_COMMIT=$(git rev-parse origin/screwdom 2>/dev/null || git rev-parse origin/HEAD 2>/dev/null || echo "")
+    if [ -n "$REMOTE_COMMIT" ]; then
+      echo "Latest remote commit: $REMOTE_COMMIT"
+      # Force reset to remote branch to ensure we have latest
+      git reset --hard origin/screwdom || git reset --hard "$REMOTE_COMMIT" || echo "Reset failed, trying pull..."
+      # If reset failed, try pull with allow unrelated histories
+      if [ "$(git rev-parse HEAD)" != "$REMOTE_COMMIT" ]; then
+        git pull origin screwdom --no-edit --allow-unrelated-histories || git reset --hard "$REMOTE_COMMIT" || echo "Pull/reset failed"
+      fi
+    else
+      echo "Warning: Cannot determine remote commit, trying pull..."
+      git pull origin screwdom --no-edit || echo "Pull failed"
+    fi
     NEW_COMMIT=$(git rev-parse HEAD)
     echo "Current commit after update: $NEW_COMMIT"
     if [ "$CURRENT_COMMIT" != "$NEW_COMMIT" ]; then
