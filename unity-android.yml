@@ -568,6 +568,9 @@ build_apk_and_verify:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
+
+    - *setup_screwdom
+
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
     - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
@@ -778,6 +781,8 @@ build_apk_and_verify_manual:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
+    - *setup_screwdom
+
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
     - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
@@ -1043,41 +1048,7 @@ build_aab:
     - echo "Updated AndroidBundleVersionCode in ProjectSettings.asset to $AAB_VERSION"
     - grep "AndroidBundleVersionCode:" ProjectSettings/ProjectSettings.asset
 
-    # --- Build Addressables with Play Asset Delivery ---
-    - echo "========================================"
-    - echo "Step 1 Building Addressables with Play Asset Delivery..."
-    - echo "========================================"
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -buildTarget Android -executeMethod BuildScript.BuildAddressablesWithPAD -logFile $CI_PROJECT_DIR/addressables_build_log.txt || (echo "Error>> Addressable build with Play Asset Delivery failed." && exit 1)
-    - echo "✓ Addressable build with Play Asset Delivery completed"
-
-    # --- Deleting folders before build ---
-    - echo "========================================"
-    - echo "Step 2 Deleting folders before build..."
-    - echo "========================================"
-    - chmod +x Assets/cicd/ci/delete_folders.sh
-    - Assets/cicd/ci/delete_folders.sh
-    - echo "✓ Folder deletion completed"
-
-    # --- Resolve Packages---
-    - echo "========================================"
-    - echo "Step 3 Resolving packages..."
-    - echo "========================================"
-    - echo "Resolving packages..."
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -executeMethod BuildScript.ResolvePackage -logFile $CI_PROJECT_DIR/resolve_log.txt -quit || (echo "Error>> Package Manager resolve failed." && exit 1)
-    - echo "✓ Package resolution completed"
-
-    # --- Remove com.unity.ads from manifest.json ---
-    - echo "========================================"
-    - echo "Step 4 Removing com.unity.ads from packages..."
-    - echo "========================================"
-    - sed -i '/"com.unity.ads"/d' Packages/manifest.json
-    - echo "✓ Removed com.unity.ads from manifest.json"
-    - cp Packages/packages-lock.json Packages/packages-lock.json.bak
-    - jq 'del(.dependencies["com.unity.ads"])' Packages/packages-lock.json > tmp.json && mv tmp.json Packages/packages-lock.json
-    - echo "✓ Removed com.unity.ads from packages-lock.json"
-    - echo "========================================"
-    - echo "✓ setup_screwdom completed successfully"
-    - echo "========================================"
+    - *setup_screwdom
 
     # Build AAB
     - mkdir -p Build/Android;
@@ -1178,6 +1149,8 @@ build_apk_by_tag:
     - export FULL_CHANGELOG=$(echo -e "$CHANGELOG\n\n$BUILDER_INFO")
     - echo "Final CHANGELOG:"
     - echo "$FULL_CHANGELOG"
+
+    - *setup_screwdom
 
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
@@ -1333,6 +1306,9 @@ build_self_test:
     - if: '$CI_COMMIT_TAG =~ /^self_test(_[A-Z0-9]+)?$/'
       when: on_success
   script:
+  
+    - *setup_screwdom
+
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
     - echo "$APK_NAME" > apk_name.txt
