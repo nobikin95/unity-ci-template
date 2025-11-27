@@ -18,8 +18,40 @@ variables:
   - SLACK_CHANNEL_ID="C07UU3A6H0R"
   - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
-  # Clone Assets/cicd to latest version (non-recursive)
-  - git submodule update --init --remote --checkout Assets/cicd
+  # Clone Assets/cicd to latest version (non-recursive) and ensure latest code from screwdom branch
+  - git submodule update --init --remote Assets/cicd
+  # Force update to latest version from branch screwdom
+  - |
+    cd Assets/cicd
+    git fetch origin --depth=1
+    git fetch origin screwdom --depth=1 || git fetch origin --depth=1
+    CURRENT_COMMIT=$(git rev-parse HEAD)
+    echo "Current commit before update: $CURRENT_COMMIT"
+    git checkout screwdom || git checkout -b screwdom origin/screwdom || echo "Branch screwdom may not exist, using default"
+    git pull origin screwdom --ff-only || git reset --hard origin/screwdom || echo "Pull/reset failed, continuing..."
+    NEW_COMMIT=$(git rev-parse HEAD)
+    echo "Current commit after update: $NEW_COMMIT"
+    if [ "$CURRENT_COMMIT" != "$NEW_COMMIT" ]; then
+      echo "✓ Submodule updated from $CURRENT_COMMIT to $NEW_COMMIT"
+    else
+      echo "ℹ Submodule already at latest version: $NEW_COMMIT"
+    fi
+    cd ../..
+  # Verify Assets/cicd submodule was updated correctly
+  - |
+    if [ ! -d "Assets/cicd" ]; then
+      echo "Error>> Assets/cicd submodule directory not found after update"
+      exit 1
+    fi
+    echo "Current branch and commit of Assets/cicd:"
+    cd Assets/cicd && echo "Branch: $(git branch --show-current)" && echo "Commit: $(git rev-parse HEAD)" && echo "Latest remote: $(git rev-parse origin/screwdom 2>/dev/null || echo 'N/A')" && cd ../.. || echo "Cannot determine branch/commit"
+    if [ ! -f "Assets/cicd/Assets/Editor/BuildScript.cs" ]; then
+      echo "Error>> BuildScript.cs not found in Assets/cicd submodule"
+      echo "Contents of Assets/cicd:"
+      ls -la Assets/cicd/ || echo "Cannot list Assets/cicd"
+      exit 1
+    fi
+    echo "✓ Assets/cicd submodule verified"
   # Clone all other submodules recursively (exclude Assets/cicd)
   - git config --file .gitmodules --get-regexp path | awk '$2 != "Assets/cicd" {print $2}' | xargs -r -I {} git submodule update --init --recursive --checkout {}
   - git submodule foreach 'git reset --hard'
