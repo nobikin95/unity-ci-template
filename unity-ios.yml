@@ -43,6 +43,47 @@ variables:
   - echo "Updated m_ShowUnitySplashLogo in ProjectSettings.asset to 0"
   - grep "m_ShowUnitySplashLogo:" ProjectSettings/ProjectSettings.asset
 
+.setup_screwdom: &setup_screwdom
+  # --- 1: Build Addressables ---
+  - echo "========================================"
+  - echo "Step 1 Building Addressables..."
+  - echo "========================================"
+  # Verify BuildScript.cs exists and contains BuildAddressables method
+  - |
+    if [ ! -f "Assets/cicd/Assets/Editor/BuildScript.cs" ]; then
+      echo "Error>> BuildScript.cs not found at Assets/cicd/Assets/Editor/BuildScript.cs"
+      echo "Checking if Assets/cicd submodule exists..."
+      ls -la Assets/cicd/ || echo "Assets/cicd directory not found"
+      exit 1
+    fi
+    if ! grep -q "BuildAddressables" "Assets/cicd/Assets/Editor/BuildScript.cs"; then
+      echo "Error>> BuildAddressables method not found in BuildScript.cs"
+      echo "Current BuildScript.cs content (first 50 lines):"
+      head -50 "Assets/cicd/Assets/Editor/BuildScript.cs" || echo "Cannot read BuildScript.cs"
+      exit 1
+    fi
+    echo "✓ BuildScript.cs found and contains BuildAddressables method"
+  # Resolve packages to ensure Unity compiles scripts before calling executeMethod
+  - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve > /dev/null 2>&1 || echo "Package resolution completed with warnings"
+  - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -buildTarget iOS -executeMethod BuildScript.BuildAddressables -logFile $CI_PROJECT_DIR/addressables_build_log.txt || {
+      echo "Error>> Addressable build failed.";
+      echo "Checking build log for errors:"
+      tail -50 $CI_PROJECT_DIR/addressables_build_log.txt || echo "Cannot read log file"
+      exit 1;
+    }
+  - echo "✓ Addressable build completed"
+
+  # --- 2: Deleting folders before build ---
+  - echo "========================================"
+  - echo "Step 2 Deleting folders before build..."
+  - echo "========================================"
+  - chmod +x Assets/cicd/ci/delete_folders.sh
+  - Assets/cicd/ci/delete_folders.sh
+  - echo "✓ Folder deletion completed"
+  - echo "========================================"
+  - echo "✓ setup_screwdom completed successfully"
+  - echo "========================================"
+
 .common_build_steps: &common_build_steps
   # Update Scripting Symbol
   - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
@@ -232,6 +273,7 @@ build_ios_release:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
+    - *setup_screwdom
     - *common_build_steps
 
     # Fetch changelog for iOS release tags
@@ -595,6 +637,7 @@ build_ios_ipa:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME == "ios-develop"'
       when: manual
   script:
+    - *setup_screwdom
     - *common_build_steps
     - echo "Adding FIRDebugEnabled flag to Info.plist..."
     - INFO_PLIST_PATH="Build/iOS/Info.plist"
@@ -784,6 +827,7 @@ build_xcode_project:
     - if: '$CI_COMMIT_TAG =~ /ios-xcode/'
       when: manual
   script:
+    - *setup_screwdom
     - *common_build_steps
     - echo "✅ Xcode project build completed successfully!"
     - echo "📁 Xcode project location Build/iOS/Unity-iPhone.xcodeproj"
