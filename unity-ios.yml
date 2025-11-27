@@ -627,6 +627,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
+        echo "🔥 Building với -FIRDebugEnabled flag (đã được thêm vào Info.plist)..."
         xcodebuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
@@ -637,19 +638,19 @@ build_ios_ipa:
 
         echo "Exporting archive with automatic signing..."
 
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
-          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" ]; then
+          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
         fi
 
         # Simple export with automatic signing
-        echo "🎯 Exporting with automatic signing..."
+        echo "🎯 Exporting with development method (có thể cài trên máy macOS khác)..."
         OUTPUT_DIR="$CI_PROJECT_DIR/Build/iOS"
         mkdir -p "$OUTPUT_DIR"
 
         if xcodebuild -exportArchive \
             -archivePath "$ARCHIVE_PATH" \
             -exportPath "$OUTPUT_DIR/ExportedIPA_Dev" \
-            -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
+            -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" \
             -allowProvisioningUpdates \
             > "$EXPORT_LOG_PATH" 2>&1; then
 
@@ -678,6 +679,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
+        echo "🔥 Building với -FIRDebugEnabled flag (đã được thêm vào Info.plist)..."
         xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
@@ -688,13 +690,14 @@ build_ios_ipa:
 
         echo "Exporting archive with automatic signing..."
 
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
-          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" ]; then
+          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
         fi
 
+        echo "🎯 Exporting with development method (có thể cài trên máy macOS khác)..."
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Dev" \
-          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" \
           -allowProvisioningUpdates \
           -quiet \
           > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
