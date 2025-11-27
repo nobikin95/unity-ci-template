@@ -183,7 +183,7 @@ variables:
       local detailed_message=""
       case "$error_type" in
         "GRADLE")
-          detailed_message="🔧 *Loại lỗi:* Gradle Build Failure\n📋 *Nguyên nhân:* Lỗi khi package APK (PackageAndroidArtifact)\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory hoặc Gradle cache\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-1} lần\n  • Nếu vẫn fail, thử restart pipeline hoặc clean build"
+          detailed_message="🔧 *Loại lỗi:* Gradle Build Failure\n📋 *Nguyên nhân:* Lỗi khi package APK (PackageAndroidArtifact)\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory hoặc Gradle cache\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần\n  • Nếu vẫn fail, thử restart pipeline hoặc clean build"
           ;;
         "COMPILATION")
           detailed_message="💻 *Loại lỗi:* Compilation Error\n📋 *Nguyên nhân:* Lỗi biên dịch C# code\n💡 *Khuyến nghị:*\n  • Kiểm tra code changes gần nhất\n  • Xem chi tiết lỗi trong log bên dưới\n  • Fix code và commit lại"
@@ -233,6 +233,101 @@ variables:
       fi
 
       echo "Build failure notifications sent.";
+    }
+
+  # Helper function to retry Unity build with automatic Gradle failure detection
+  # Usage: retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK"
+  #        retry_unity_build_with_gradle_detection "BuildScript.BuildAAB" "Build/Android/${AAB_NAME}" "AAB"
+  - |
+    retry_unity_build_with_gradle_detection() {
+      local build_method="${1:-BuildScript.BuildAPK}"  # Unity build method to execute
+      local build_path="${2}"                           # Output path for build artifact
+      local build_type_name="${3:-APK}"                 # Build type name for logging
+      local max_retry_attempts="${MAX_RETRY_ATTEMPTS:-2}"  # Number of retries (default: 2)
+      
+      local build_attempt=0
+      local build_success=false
+      local max_total_attempts=$((max_retry_attempts + 1))
+      local log_file="$CI_PROJECT_DIR/build_output.log"
+
+      echo "========================================";
+      echo "Starting Unity build with Gradle retry logic";
+      echo "Build Method: $build_method";
+      echo "Build Path: $build_path";
+      echo "Build Type: $build_type_name";
+      echo "Max Retries: $max_retry_attempts (Total attempts: $max_total_attempts)";
+      echo "========================================";
+
+      while [ $build_attempt -lt $max_total_attempts ]; do
+        build_attempt=$((build_attempt + 1))
+        echo "";
+        echo "========================================";
+        echo "Unity build attempt $build_attempt of $max_total_attempts";
+        echo "========================================";
+
+        # Clear log file for each attempt (except first)
+        if [ $build_attempt -gt 1 ]; then
+          echo "Clearing previous build log...";
+          echo "Starting Unity build (retry $build_attempt)..." > "$log_file"
+        fi
+
+        # Run Unity build
+        if $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod "$build_method" -buildPath="$build_path" -logFile "$log_file" -batchmode -nographics -silent-crashes -quit; then
+          echo "✓ Unity build succeeded on attempt $build_attempt";
+          build_success=true
+          break
+        else
+          local build_exit_code=$?
+          echo "✗ Unity build failed on attempt $build_attempt with exit code $build_exit_code";
+
+          # Check if this is a Gradle-related failure
+          if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task.*:launcher:package" "$log_file"; then
+            echo "⚠ Detected Gradle build failure in logs";
+            echo "Error details:";
+            grep -A 5 "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task.*:launcher:package" "$log_file" | head -n 10 || echo "Could not extract error details";
+
+            if [ $build_attempt -lt $max_total_attempts ]; then
+              echo "⟳ Retrying build immediately (attempt $((build_attempt + 1))/$max_total_attempts)...";
+              echo "Waiting 10 seconds before retry to allow Gradle daemon to stabilize...";
+              sleep 10;
+              continue
+            else
+              echo "✗ Max retries reached ($max_retry_attempts retry after initial build). Build failed.";
+              # Gradle failure after exhausting all retries - send notification
+              send_build_failure_notification "GRADLE_RETRY_EXHAUSTED"
+              return 1;
+            fi
+          else
+            echo "✗ Non-Gradle failure detected. Not retrying.";
+            echo "Checking error type...";
+            local error_type=$(detect_error_type "$log_file")
+            echo "Detected error type: $error_type";
+            
+            # Show last 20 lines of log for debugging
+            echo "Last 20 lines of build log:";
+            tail -n 20 "$log_file";
+            
+            # Non-Gradle failure (likely compilation error) - send notification immediately
+            if [ "$error_type" = "COMPILATION" ]; then
+              send_build_failure_notification "COMPILATION_ERROR"
+            else
+              send_build_failure_notification "BUILD_FAILED_UNKNOWN"
+            fi
+            return 1;
+          fi
+        fi
+      done
+
+      if [ "$build_success" = false ]; then
+        echo "✗ Build failed after $max_total_attempts total attempts (1 initial + $max_retry_attempts retry)";
+        # This should not be reached, but handle it anyway
+        send_build_failure_notification "BUILD_FAILED_UNKNOWN"
+        return 1;
+      fi
+
+      echo "";
+      echo "✅ Unity build completed successfully after $build_attempt attempt(s)";
+      return 0;
     }
 
   # Helper function to find and patch all Adjust.cs files with VERIFY_TOKEN block
@@ -534,9 +629,9 @@ build_apk_and_verify:
     - touch $CI_PROJECT_DIR/build_output.log
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
     - start=$(date +%s)
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
-        echo "Error... Unity build failed.";
-        send_build_failure_notification
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+        echo "Error... Unity build failed after retries.";
         exit 1;
       }
     - end=$(date +%s)
@@ -545,7 +640,7 @@ build_apk_and_verify:
     - ls -l Build/Android/
     - if [ ! -f "Build/Android/${APK_NAME}" ]; then
         echo "Error... APK file not found. Build failed.";
-        send_build_failure_notification
+        send_build_failure_notification "APK_FILE_MISSING"
         exit 1;
       else
         echo "APK build succeeded.";
@@ -744,9 +839,9 @@ build_apk_and_verify_manual:
     - touch $CI_PROJECT_DIR/build_output.log
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
     - start=$(date +%s)
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
-        echo "Error... Unity build failed.";
-        send_build_failure_notification
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+        echo "Error... Unity build failed after retries.";
         exit 1;
       }
     - end=$(date +%s)
@@ -755,7 +850,7 @@ build_apk_and_verify_manual:
     - ls -l Build/Android/
     - if [ ! -f "Build/Android/${APK_NAME}" ]; then
         echo "Error... APK file not found. Build failed.";
-        send_build_failure_notification
+        send_build_failure_notification "APK_FILE_MISSING"
         exit 1;
       else
         echo "APK build succeeded.";
@@ -911,8 +1006,9 @@ build_aab:
     - echo "AAB_NAME ${AAB_NAME}";
     - touch $CI_PROJECT_DIR/build_output.log
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAAB -buildPath=Build/Android/${AAB_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
-        send_build_failure_notification
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAAB" "Build/Android/${AAB_NAME}" "AAB" || {
+        echo "Error... Unity build failed after retries.";
         exit 1;
       }
     
@@ -920,7 +1016,7 @@ build_aab:
     - ls -l Build/Android/
     - if [ ! -f "Build/Android/${AAB_NAME}" ]; then
         echo "Error ... AAB file not found. Build failed.";
-        send_build_failure_notification
+        send_build_failure_notification "AAB_FILE_MISSING"
         exit 1;
       else
         echo "AAB build succeeded.";
@@ -1188,8 +1284,9 @@ build_self_test:
     - export NOTIFY_DEV=${MAIN_DEV}
     - *send_notify_dev
 
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
-        send_build_failure_notification
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+        echo "Error... Unity build failed after retries.";
         exit 1;
       }
     - end=$(date +%s)
@@ -1198,7 +1295,7 @@ build_self_test:
     - ls -l Build/Android/
     - if [ ! -f "Build/Android/${APK_NAME}" ]; then
         echo "Error... APK file not found. Build failed.";
-        send_build_failure_notification
+        send_build_failure_notification "APK_FILE_MISSING"
         exit 1;
       else
         echo "APK build succeeded.";
@@ -1240,7 +1337,7 @@ build_self_test:
         python3 Assets/cicd/ci/send_slack_file_dm.py "Build/Android/${APK_NAME}" "Build Self Test:" "$MAIN_DEV";
       else
         echo "Error... No APK found for upload.";
-        send_build_failure_notification
+        send_build_failure_notification "APK_UPLOAD_MISSING"
         exit 1;
       fi
 
@@ -1272,7 +1369,8 @@ check_build_failure:
     - touch $CI_PROJECT_DIR/build_output.log
     - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
     - start=$(date +%s)
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
         python3 Assets/cicd/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "?? Daily Build Failed... CI/CD detected a build failure during the daily build check." "$SLACK_BOT_TOKEN" "? Please review the pipeline logs and address the issue. ???? Job Details... $CI_JOB_URL";
         exit 1;
       }
@@ -1282,6 +1380,7 @@ check_build_failure:
     - ls -l Build/Android/
     - if [ ! -f "Build/Android/${APK_NAME}" ]; then
         echo "Error... APK file not found. Build failed.";
+        send_build_failure_notification "APK_FILE_MISSING"
         python3 Assets/cicd/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "?? Daily Build Failed... CI/CD detected a build failure during the daily build check." "$SLACK_BOT_TOKEN" "? Please review the pipeline logs and address the issue. ???? Job Details... $CI_JOB_URL";
         exit 1;
       else
