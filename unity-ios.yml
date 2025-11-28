@@ -596,17 +596,16 @@ build_ios_ipa:
       when: manual
   script:
     - *common_build_steps
-    - echo "Adding FIRDebugEnabled flag to Info.plist..."
-    - INFO_PLIST_PATH="Build/iOS/Info.plist"
-    - | # Use block scalar for multi-line if statement
-      if [ -f "$INFO_PLIST_PATH" ]; then
-        /usr/libexec/PlistBuddy -c "Delete :LSApplicationLaunchArguments" "$INFO_PLIST_PATH" 2>/dev/null || true
-        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments array" "$INFO_PLIST_PATH"
-        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments:0 string -FIRDebugEnabled" "$INFO_PLIST_PATH"
-        echo "FIRDebugEnabled flag added."
-      else
-        handle_xcode_error "Info.plist not found at $INFO_PLIST_PATH"
-      fi
+    
+    # Add -FIRDebugEnabled flag to Xcode scheme (cách đúng để enable Firebase Debug View)
+    - echo "🔧 Adding -FIRDebugEnabled flag to Xcode scheme launch arguments..."
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/add_firebase_debug_flag.sh"
+    - cd Build/iOS
+    - | # Use block scalar for command with error handling
+      "$CI_PROJECT_DIR/Assets/cicd/ci/add_firebase_debug_flag.sh" "$(pwd)" || {
+        echo "⚠️  Failed to add flag to scheme, but continuing build..."
+      }
+    - cd "$CI_PROJECT_DIR"
 
     # Add step to clean DerivedData before Xcode build
     - echo "Ensuring clean build environment by removing previous DerivedData..."
