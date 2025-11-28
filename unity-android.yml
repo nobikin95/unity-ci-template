@@ -239,7 +239,7 @@ variables:
       echo "Build failure notifications sent.";
     }
 
-  # Helper function to retry Unity build with automatic Gradle failure detection
+  # Helper function to retry Unity build với khả năng phát hiện lỗi Gradle và kiểm tra artifact
   # Usage: retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK"
   #        retry_unity_build_with_gradle_detection "BuildScript.BuildAAB" "Build/Android/${AAB_NAME}" "AAB"
   #        retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" "" "-buildOption=\"${SELECTED_BUILD_OPTIONS}\""
@@ -250,6 +250,7 @@ variables:
       local build_type_name="${3:-APK}"                 # Build type name for logging
       local max_retry_attempts="${MAX_RETRY_ATTEMPTS:-2}"  # Number of retries (default: 2)
       local build_options="${4:-}"                      # Additional build options (e.g., -buildOption="...")
+      local expected_artifact="${5:-$build_path}"       # Expected artifact path to verify after build
       
       local build_attempt=0
       local build_success=false
@@ -286,6 +287,29 @@ variables:
         
         if eval "$build_cmd"; then
           echo "✓ Unity build succeeded on attempt $build_attempt";
+
+          # Verify expected artifact exists
+          if [ -n "$expected_artifact" ] && [ ! -f "$expected_artifact" ]; then
+            echo "✗ Build reported success but artifact '$expected_artifact' not found.";
+
+            if [ $build_attempt -lt $max_total_attempts ]; then
+              echo "⟳ Retrying because artifact is missing (attempt $((build_attempt + 1))/$max_total_attempts)...";
+              sleep 10;
+              continue
+            else
+              local missing_context="FILE_MISSING"
+              if [ "$build_type_name" = "APK" ]; then
+                missing_context="APK_FILE_MISSING"
+              elif [ "$build_type_name" = "AAB" ]; then
+                missing_context="AAB_FILE_MISSING"
+              fi
+
+              echo "✗ Artifact still missing after retries ($expected_artifact).";
+              send_build_failure_notification "$missing_context"
+              return 1
+            fi
+          fi
+
           build_success=true
           break
         else
