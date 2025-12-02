@@ -570,7 +570,7 @@ variables:
   - echo "========================================"
   - echo "Step 1 Building Addressables with Play Asset Delivery..."
   - echo "========================================"
-  - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -buildTarget Android -executeMethod BuildScript.BuildAddressablesWithPAD -logFile $CI_PROJECT_DIR/addressables_build_log.txt || {
+  - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -buildTarget Android -executeMethod BuildScript.BuildAddressables -logFile $CI_PROJECT_DIR/addressables_build_log.txt || {
       echo "Error>> Addressable build with Play Asset Delivery failed.";
       exit 1;
     }
