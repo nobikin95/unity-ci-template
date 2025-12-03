@@ -16,9 +16,9 @@ variables:
 .common_before_script: &common_before_script
   - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
-  # Clone Assets/cicd to latest version (non-recursive) and ensure latest code from screwdom branch
+  # Clone Assets/cicd to latest version (non-recursive) and ensure latest code from screwzle branch
   - git submodule update --init --remote Assets/cicd
-  # Force update to latest version from branch screwdom
+  # Force update to latest version from branch screwzle
   - |
     cd Assets/cicd
     CURRENT_COMMIT=$(git rev-parse HEAD)
@@ -30,16 +30,16 @@ variables:
     fi
     # Fetch latest from remote with all refs
     echo "Fetching latest from origin..."
-    git fetch origin +refs/heads/screwdom:refs/remotes/origin/screwdom 2>&1 || git fetch origin screwdom 2>&1 || git fetch origin 2>&1
+    git fetch origin +refs/heads/screwzle:refs/remotes/origin/screwzle 2>&1 || git fetch origin screwzle 2>&1 || git fetch origin 2>&1
     # Fetch all branches to ensure we have latest
     git fetch origin --all --prune 2>&1 || echo "Fetch all failed, continuing..."
-    # Checkout screwdom branch
-    git checkout screwdom 2>/dev/null || git checkout -b screwdom origin/screwdom 2>/dev/null || echo "Branch screwdom may not exist"
+    # Checkout screwzle branch
+    git checkout screwzle 2>/dev/null || git checkout -b screwzle origin/screwzle 2>/dev/null || echo "Branch screwzle may not exist"
     # Get latest commit from remote using ls-remote to bypass local cache
     echo "Checking latest commit on remote..."
-    REMOTE_COMMIT=$(git ls-remote origin screwdom | awk '{print $1}' | head -1)
+    REMOTE_COMMIT=$(git ls-remote origin screwzle | awk '{print $1}' | head -1)
     if [ -z "$REMOTE_COMMIT" ]; then
-      REMOTE_COMMIT=$(git rev-parse origin/screwdom 2>/dev/null || echo "")
+      REMOTE_COMMIT=$(git rev-parse origin/screwzle 2>/dev/null || echo "")
     fi
     if [ -n "$REMOTE_COMMIT" ]; then
       echo "Latest remote commit: $REMOTE_COMMIT"
@@ -47,14 +47,14 @@ variables:
       # Force fetch the specific commit
       git fetch origin "$REMOTE_COMMIT" 2>/dev/null || echo "Fetch specific commit failed"
       # Force reset to remote branch
-      git reset --hard "origin/screwdom" 2>/dev/null || git reset --hard "$REMOTE_COMMIT" 2>/dev/null || {
+      git reset --hard "origin/screwzle" 2>/dev/null || git reset --hard "$REMOTE_COMMIT" 2>/dev/null || {
         echo "Reset failed, trying to checkout commit directly..."
-        git fetch origin screwdom
-        git reset --hard "origin/screwdom" || git reset --hard "$REMOTE_COMMIT" || echo "All reset methods failed"
+        git fetch origin screwzle
+        git reset --hard "origin/screwzle" || git reset --hard "$REMOTE_COMMIT" || echo "All reset methods failed"
       }
     else
       echo "Warning: Cannot determine remote commit, trying pull..."
-      git pull origin screwdom --no-edit --rebase 2>&1 || git pull origin screwdom --no-edit 2>&1 || echo "Pull failed"
+      git pull origin screwzle --no-edit --rebase 2>&1 || git pull origin screwzle --no-edit 2>&1 || echo "Pull failed"
     fi
     NEW_COMMIT=$(git rev-parse HEAD)
     echo "Current commit after update: $NEW_COMMIT"
@@ -63,12 +63,12 @@ variables:
     else
       echo "ℹ Submodule commit unchanged: $NEW_COMMIT"
       echo "Verifying if this is truly the latest..."
-      LATEST_REMOTE=$(git ls-remote origin screwdom | awk '{print $1}' | head -1)
+      LATEST_REMOTE=$(git ls-remote origin screwzle | awk '{print $1}' | head -1)
       if [ -n "$LATEST_REMOTE" ] && [ "$NEW_COMMIT" != "$LATEST_REMOTE" ]; then
         echo "⚠ WARNING: Local commit ($NEW_COMMIT) differs from remote ($LATEST_REMOTE)"
         echo "Attempting to force update..."
-        git fetch origin "$LATEST_REMOTE" 2>/dev/null || git fetch origin screwdom
-        git reset --hard "$LATEST_REMOTE" 2>/dev/null || git reset --hard "origin/screwdom" 2>/dev/null || echo "Force update failed"
+        git fetch origin "$LATEST_REMOTE" 2>/dev/null || git fetch origin screwzle
+        git reset --hard "$LATEST_REMOTE" 2>/dev/null || git reset --hard "origin/screwzle" 2>/dev/null || echo "Force update failed"
         FINAL_COMMIT=$(git rev-parse HEAD)
         echo "Final commit after force update: $FINAL_COMMIT"
       fi
@@ -81,7 +81,7 @@ variables:
       exit 1
     fi
     echo "Current branch and commit of Assets/cicd:"
-    cd Assets/cicd && echo "Branch: $(git branch --show-current)" && echo "Commit: $(git rev-parse HEAD)" && echo "Latest remote: $(git rev-parse origin/screwdom 2>/dev/null || echo 'N/A')" && cd ../.. || echo "Cannot determine branch/commit"
+    cd Assets/cicd && echo "Branch: $(git branch --show-current)" && echo "Commit: $(git rev-parse HEAD)" && echo "Latest remote: $(git rev-parse origin/screwzle 2>/dev/null || echo 'N/A')" && cd ../.. || echo "Cannot determine branch/commit"
     if [ ! -f "Assets/cicd/Assets/Editor/BuildScript.cs" ]; then
       echo "Error>> BuildScript.cs not found in Assets/cicd submodule"
       echo "Contents of Assets/cicd:"
@@ -544,18 +544,19 @@ variables:
   - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
 
 .setup_build_obb: &setup_build_obb
-  - echo "Configuring settings for AAB build with OBB..."
+  - echo "Configuring settings for AAB build with Split Binary (Asset Pack)..."
   - echo "Before modification:"
   - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
   - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
   - |
-    # Set splitApplicationBinary to 0
+    # Set splitApplicationBinary to 1 (Enable split binary to create install-time asset pack inside AAB)
     if grep -q "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset; then
-      sed -i 's/\(splitApplicationBinary:\).*/\1 0/' ProjectSettings/ProjectSettings.asset
+      sed -i 's/\(splitApplicationBinary:\).*/\1 1/' ProjectSettings/ProjectSettings.asset
     else
-      sed -i '/PlayerSettings:/a\  splitApplicationBinary: 0' ProjectSettings/ProjectSettings.asset
+      sed -i '/PlayerSettings:/a\  splitApplicationBinary: 1' ProjectSettings/ProjectSettings.asset
     fi
-    # Set APKExpansionFiles to 1
+    
+    # Set APKExpansionFiles to 1 (Ensure expansion setting is enabled)
     if grep -q "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset; then
       sed -i 's/\(APKExpansionFiles:\).*/\1 1/' ProjectSettings/ProjectSettings.asset
     else
@@ -564,17 +565,17 @@ variables:
   - echo "After modification:"
   - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
   - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
-
-.setup_screwdom: &setup_screwdom
-  # --- 1: Build Addressables with Play Asset Delivery ---
+  
+.setup_screwzle: &setup_screwzle
+  # --- 1b: Build Addressables with Default Build Script ---
   - echo "========================================"
-  - echo "Step 1 Building Addressables with Play Asset Delivery..."
+  - echo "Step 1b Building Addressables with Default Build Script..."
   - echo "========================================"
   - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -buildTarget Android -executeMethod BuildScript.BuildAddressables -logFile $CI_PROJECT_DIR/addressables_build_log.txt || {
-      echo "Error>> Addressable build with Play Asset Delivery failed.";
+      echo "Error>> Addressable build failed.";
       exit 1;
     }
-  - echo "✓ Addressable build with Play Asset Delivery completed"
+  - echo "✓ Addressable build completed"
 
   # --- 2: Deleting folders before build ---
   - echo "========================================"
@@ -607,7 +608,7 @@ variables:
   - jq 'del(.dependencies["com.unity.ads"])' Packages/packages-lock.json > tmp.json && mv tmp.json Packages/packages-lock.json
   - echo "✓ Removed com.unity.ads from packages-lock.json"
   - echo "========================================"
-  - echo "✓ setup_screwdom completed successfully"
+  - echo "✓ setup_screwzle completed successfully"
   - echo "========================================"
    
 build_apk_and_verify:
@@ -637,10 +638,10 @@ build_apk_and_verify:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
-    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwdom
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwzle
     - *disable_app_binary
 
-    - *setup_screwdom
+    - *setup_screwzle
 
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
@@ -852,10 +853,10 @@ build_apk_and_verify_manual:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
-    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwdom
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwzle
     - *disable_app_binary
 
-    - *setup_screwdom
+    - *setup_screwzle
 
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
@@ -1122,7 +1123,7 @@ build_aab:
     - echo "Updated AndroidBundleVersionCode in ProjectSettings.asset to $AAB_VERSION"
     - grep "AndroidBundleVersionCode:" ProjectSettings/ProjectSettings.asset
 
-    - *setup_screwdom
+    - *setup_screwzle
 
     # Configure AAB build with OBB (chia OBB riêng cho Google Play)
     - *setup_build_obb
@@ -1227,10 +1228,10 @@ build_apk_by_tag:
     - echo "Final CHANGELOG:"
     - echo "$FULL_CHANGELOG"
 
-    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwdom
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwzle
     - *disable_app_binary
 
-    - *setup_screwdom
+    - *setup_screwzle
 
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
@@ -1386,10 +1387,10 @@ build_self_test:
     - if: '$CI_COMMIT_TAG =~ /^self_test(_[A-Z0-9]+)?$/'
       when: on_success
   script:
-    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwdom
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwzle
     - *disable_app_binary
   
-    - *setup_screwdom
+    - *setup_screwzle
 
     - mkdir -p Build/Android;
     - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
