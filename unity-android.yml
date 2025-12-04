@@ -550,7 +550,6 @@ build_apk_and_verify:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-      - script_failure
   needs:
     - job: upload_internal
       optional: true
@@ -764,7 +763,6 @@ build_apk_and_verify_manual:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-      - script_failure
   needs: []
   before_script:
     - export BUILD_TYPE="📱APK"
@@ -974,7 +972,6 @@ build_aab:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-      - script_failure
   needs: []
   before_script:
     - export BUILD_TYPE="📱AAB"
