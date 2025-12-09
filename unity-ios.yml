@@ -110,7 +110,7 @@ variables:
         else
           verify_exit_code=$?
           echo ""
-          echo "❌ Framework verification failed with exit code $verify_exit_code"
+          echo " Framework verification failed with exit code $verify_exit_code"
           echo ""
           
           retry_count=$((retry_count + 1))
@@ -122,7 +122,7 @@ variables:
             sleep 10
           else
             echo ""
-            echo "❌ Framework verification failed after $max_retries attempts."
+            echo " Framework verification failed after $max_retries attempts."
             echo "📋 Final missing frameworks:"
             echo ""
             Assets/cicd/ci/verify_frameworks.sh || echo "Framework verification script failed"
@@ -457,7 +457,7 @@ build_ios_release:
       if fastlane upload_testflight 2>&1 | tee fastlane_upload.log; then
         echo "✅ Successfully uploaded IPA to TestFlight!"
       else
-        echo "❌ Fastlane upload failed. Check fastlane_upload.log for details."
+        echo " Fastlane upload failed. Check fastlane_upload.log for details."
         tail -n 100 fastlane_upload.log
         handle_xcode_error "Fastlane upload to TestFlight failed" "fastlane_upload.log"
       fi
@@ -508,7 +508,7 @@ build_ios_release:
   after_script:
     # Ensure we're in the correct working directory
     - echo "📍 Ensuring correct working directory..."
-    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - cd "$CI_PROJECT_DIR" || { echo " Failed to change to CI_PROJECT_DIR"; exit 1; }
     - echo "✅ Current directory $(pwd)"
 
     # Wait for file system sync (important on macOS APFS)
@@ -544,6 +544,33 @@ build_ios_release:
     - echo "🔧 Starting full project backup with enhanced verification..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
+
+    # ========================================
+    # 🧹 STORAGE CLEANUP (After backup)
+    # ========================================
+    - echo ""
+    - echo "🧹 Starting storage cleanup to free disk space..."
+    
+    # 1. Clean DerivedData (CRITICAL - 5-15GB)
+    - echo "  → Cleaning DerivedData..."
+    - rm -rf "$XCODE_DERIVED_DATA_PATH" || true
+    - echo "  ✅ DerivedData cleaned"
+    
+    # 2. Clean build artifacts (IMPORTANT - 10-15GB)
+    - echo "  → Cleaning archives and exported IPAs..."
+    - rm -rf Build/iOS/*.xcarchive || true
+    - rm -rf Build/iOS/ExportedIPA_Release || true
+    - echo "  ✅ Build artifacts cleaned"
+    
+    # 3. Clean log files
+    - echo "  → Cleaning log files..."
+    - rm -f *.log || true
+    - rm -f changelog.* || true
+    - echo "  ✅ Log files cleaned"
+    
+    - echo "✅ Storage cleanup completed!"
+    - echo "📊 Remaining disk space:"
+    - df -h | grep -E 'Filesystem|disk' || df -h
 
   artifacts:
     paths:
@@ -661,7 +688,7 @@ build_ios_ipa:
           fi
 
         else
-          echo "❌ Export failed"
+          echo " Export failed"
           handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
         fi
 
@@ -705,7 +732,7 @@ build_ios_ipa:
           echo "✅ Found IPA: $IPA_FILE"
           echo "📊 IPA Size: $IPA_SIZE"
         else
-          echo "❌ Could not find IPA file"
+          echo " Could not find IPA file"
           echo "🔍 Available files:"
           find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" -o -name "*.app" 2>/dev/null | head -5 || echo "No files found"
         fi
@@ -718,7 +745,7 @@ build_ios_ipa:
   after_script:
     # Ensure we're in the correct working directory
     - echo "📍 Ensuring correct working directory..."
-    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - cd "$CI_PROJECT_DIR" || { echo " Failed to change to CI_PROJECT_DIR"; exit 1; }
     - echo "✅ Current directory $(pwd)"
 
     # Wait for file system sync (important on macOS APFS)
@@ -755,6 +782,33 @@ build_ios_ipa:
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
 
+    # ========================================
+    # 🧹 STORAGE CLEANUP (After backup)
+    # ========================================
+    - echo ""
+    - echo "🧹 Starting storage cleanup to free disk space..."
+    
+    # 1. Clean DerivedData (CRITICAL - 5-15GB)
+    - echo "  → Cleaning DerivedData..."
+    - rm -rf "$XCODE_DERIVED_DATA_PATH" || true
+    - echo "  ✅ DerivedData cleaned"
+    
+    # 2. Clean build artifacts (IMPORTANT - 10-15GB)
+    - echo "  → Cleaning archives and exported IPAs..."
+    - rm -rf Build/iOS/*.xcarchive || true
+    - rm -rf Build/iOS/ExportedIPA_Dev || true
+    - echo "  ✅ Build artifacts cleaned"
+    
+    # 3. Clean log files
+    - echo "  → Cleaning log files..."
+    - rm -f *.log || true
+    - rm -f changelog.* || true
+    - echo "  ✅ Log files cleaned"
+    
+    - echo "✅ Storage cleanup completed!"
+    - echo "📊 Remaining disk space:"
+    - df -h | grep -E 'Filesystem|disk' || df -h
+
 
 
 build_xcode_project:
@@ -784,6 +838,6 @@ build_xcode_project:
       if [ -d "Build/iOS/Unity-iPhone.xcodeproj" ]; then
         echo "✅ Xcode project verified at Build/iOS/Unity-iPhone.xcodeproj"
       else
-        echo "❌ Xcode project not found!"
+        echo " Xcode project not found!"
         exit 1
       fi
