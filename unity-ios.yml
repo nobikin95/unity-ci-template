@@ -597,15 +597,9 @@ build_ios_ipa:
   script:
     - *common_build_steps
     
-    # Add -FIRDebugEnabled flag to Xcode scheme (cách đúng để enable Firebase Debug View)
-    - echo "🔧 Adding -FIRDebugEnabled flag to Xcode scheme launch arguments..."
-    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/add_firebase_debug_flag.sh"
-    - cd Build/iOS
-    - | # Use block scalar for command with error handling
-      "$CI_PROJECT_DIR/Assets/cicd/ci/add_firebase_debug_flag.sh" "$(pwd)" || {
-        echo "⚠️  Failed to add flag to scheme, but continuing build..."
-      }
-    - cd "$CI_PROJECT_DIR"
+    # Firebase Debug View is automatically configured during Unity build
+    # The BuildScript.cs post-processing adds debug flags to Info.plist
+    # This works reliably for exported IPAs (not just Xcode runs)
 
     # Add step to clean DerivedData before Xcode build
     - echo "Ensuring clean build environment by removing previous DerivedData..."
@@ -626,7 +620,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
-        echo "🔥 Building với -FIRDebugEnabled flag (đã được thêm vào Info.plist)..."
+        echo "🔥 Building with Firebase Debug enabled (configured in Info.plist by Unity BuildScript)..."
         xcodebuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
@@ -678,7 +672,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
-        echo "🔥 Building với -FIRDebugEnabled flag (đã được thêm vào Info.plist)..."
+        echo "🔥 Building with Firebase Debug enabled (configured in Info.plist by Unity BuildScript)..."
         xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
