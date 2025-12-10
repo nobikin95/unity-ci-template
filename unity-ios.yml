@@ -6,8 +6,12 @@ variables:
   - git clean -fdx
   - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
-  # Clone Assets/cicd to latest version (non-recursive)
-  - git submodule update --init --remote --checkout Assets/cicd
+  # Initialize and fetch latest commits for Assets/cicd submodule
+  - git submodule update --init Assets/cicd
+  # Force fetch and checkout to latest commit from ios/stripe branch
+  - cd Assets/cicd && git fetch origin ios/stripe && git checkout origin/ios/stripe && cd ../..
+  - echo "Assets/cicd submodule updated to latest commit:"
+  - cd Assets/cicd && git log --oneline -1 && cd ../..
   # Clone all other submodules recursively (exclude Assets/cicd)
   - git config --file .gitmodules --get-regexp path | awk '$2 != "Assets/cicd" {print $2}' | xargs -r -I {} git submodule update --init --recursive --checkout {}
   - git submodule foreach 'git reset --hard'
