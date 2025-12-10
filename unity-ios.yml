@@ -657,6 +657,26 @@ build_ios_ipa:
   script:
     - *common_build_steps
     
+    # Check for NOTIFY_DEV variable and determine who to notify
+    - if [ -z "$NOTIFY_DEV" ]; then
+        echo "NOTIFY_DEV is not set or empty. Exiting...";
+        exit 1;
+      fi
+    - |
+      if [ "$CI_COMMIT_TAG" = "self_test" ]; then
+        export MAIN_DEV=$(echo $NOTIFY_DEV | cut -d ',' -f1);  # Default to first user in NOTIFY_DEV
+      else
+        export MAIN_DEV=$(echo $CI_COMMIT_TAG | sed 's/self_test_//');  # Extract USER_ID from self_test_<USER_ID>
+        # Verify if MAIN_DEV exists in NOTIFY_DEV
+        if ! echo ",$NOTIFY_DEV," | grep -q ",$MAIN_DEV,"; then
+          echo "Error: $MAIN_DEV from tag $CI_COMMIT_TAG is not in NOTIFY_DEV ($NOTIFY_DEV). Exiting...";
+          exit 1;
+        fi
+      fi
+
+    - echo "Main developer to notify $MAIN_DEV"
+    - export NOTIFY_DEV=${MAIN_DEV}
+    
     # Firebase Debug View is automatically configured during Unity build
     # The BuildScript.cs post-processing adds debug flags to Info.plist
     # This works reliably for exported IPAs (not just Xcode runs)
@@ -791,6 +811,18 @@ build_ios_ipa:
       fi
     - cd "$CI_PROJECT_DIR"
     - *common_update_version
+    
+    # Send IPA file to MAIN_DEV via Slack
+    - |
+      echo "📤 Sending IPA file to MAIN_DEV via Slack..."
+      IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" | head -n 1)
+      if [ -n "$IPA_FILE" ] && [ -f "$IPA_FILE" ]; then
+        echo "Found IPA file: $IPA_FILE"
+        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_file.py" "$IPA_FILE" "$MAIN_DEV" "IPA Build - $PROJECT_NAME v$CURRENT_VERSION" "$SLACK_BOT_TOKEN"
+        echo "✅ IPA file sent to $MAIN_DEV via Slack"
+      else
+        echo "❌ No IPA file found to send via Slack"
+      fi
 
   after_script:
     # Ensure we're in the correct working directory
