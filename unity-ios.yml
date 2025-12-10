@@ -1,6 +1,8 @@
 variables:
   IOS_DEVELOPMENT_TEAM: "RN7J7SQGUH"
-  XCODE_DERIVED_DATA_PATH: "$CI_PROJECT_DIR/DerivedData"
+  # Use Xcode default location for maximum build speed and cache reuse
+  # Xcode manages its own cache efficiently across all projects
+  XCODE_DERIVED_DATA_PATH: "~/Library/Developer/Xcode/DerivedData"
 
 .common_before_script: &common_before_script
   - git clean -fdx
@@ -54,7 +56,7 @@ variables:
   - |
     # Function to perform Unity build with framework verification retry
     perform_unity_build_with_retry() {
-      local max_retries=10
+      local max_retries=5
       local retry_count=0
       
       while [ $retry_count -lt $max_retries ]; do
@@ -110,7 +112,7 @@ variables:
         else
           verify_exit_code=$?
           echo ""
-          echo "❌ Framework verification failed with exit code $verify_exit_code"
+          echo " Framework verification failed with exit code $verify_exit_code"
           echo ""
           
           retry_count=$((retry_count + 1))
@@ -122,7 +124,7 @@ variables:
             sleep 10
           else
             echo ""
-            echo "❌ Framework verification failed after $max_retries attempts."
+            echo " Framework verification failed after $max_retries attempts."
             echo "📋 Final missing frameworks:"
             echo ""
             Assets/cicd/ci/verify_frameworks.sh || echo "Framework verification script failed"
@@ -475,7 +477,7 @@ build_ios_release:
       if fastlane upload_testflight 2>&1 | tee fastlane_upload.log; then
         echo "✅ Successfully uploaded IPA to TestFlight!"
       else
-        echo "❌ Fastlane upload failed. Check fastlane_upload.log for details."
+        echo " Fastlane upload failed. Check fastlane_upload.log for details."
         tail -n 100 fastlane_upload.log
         handle_xcode_error "Fastlane upload to TestFlight failed" "fastlane_upload.log"
       fi
@@ -526,7 +528,7 @@ build_ios_release:
   after_script:
     # Ensure we're in the correct working directory
     - echo "📍 Ensuring correct working directory..."
-    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - cd "$CI_PROJECT_DIR" || { echo " Failed to change to CI_PROJECT_DIR"; exit 1; }
     - echo "✅ Current directory $(pwd)"
 
     # Wait for file system sync (important on macOS APFS)
@@ -562,6 +564,46 @@ build_ios_release:
     - echo "🔧 Starting full project backup with enhanced verification..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
+
+    # ========================================
+    # 🧹 SMART STORAGE CLEANUP (After backup)
+    # ========================================
+    - echo ""
+    - echo "🧹 Starting smart storage cleanup..."
+    
+    # Check available disk space
+    - |
+      echo "📊 Checking disk space..."
+      AVAILABLE_GB=$(df -g . | tail -1 | awk '{print $4}')
+      echo "Available disk space: ${AVAILABLE_GB}GB"
+      
+      if [ "$AVAILABLE_GB" -lt 100 ]; then
+        echo "⚠️  Low disk space detected! Performing full cleanup..."
+        
+        # Clean DerivedData when space is low
+        echo "  → Cleaning DerivedData..."
+        rm -rf "$XCODE_DERIVED_DATA_PATH" || true
+        echo "  ✅ DerivedData cleaned"
+      else
+        echo "✅ Sufficient disk space (${AVAILABLE_GB}GB available)"
+        echo "  → Skipping DerivedData cleanup for faster incremental builds"
+      fi
+    
+    # Always clean build artifacts (one-time use, can't be reused)
+    - echo "  → Cleaning build artifacts..."
+    - rm -rf Build/iOS/*.xcarchive || true
+    - rm -rf Build/iOS/ExportedIPA_Release || true
+    - echo "  ✅ Build artifacts cleaned"
+    
+    # Always clean log files
+    - echo "  → Cleaning log files..."
+    - rm -f *.log || true
+    - rm -f changelog.* || true
+    - echo "  ✅ Log files cleaned"
+    
+    - echo "✅ Smart cleanup completed!"
+    - echo "📊 Final disk space:"
+    - df -h | grep -E 'Filesystem|disk' || df -h
 
   artifacts:
     paths:
@@ -614,17 +656,10 @@ build_ios_ipa:
       when: manual
   script:
     - *common_build_steps
-    - echo "Adding FIRDebugEnabled flag to Info.plist..."
-    - INFO_PLIST_PATH="Build/iOS/Info.plist"
-    - | # Use block scalar for multi-line if statement
-      if [ -f "$INFO_PLIST_PATH" ]; then
-        /usr/libexec/PlistBuddy -c "Delete :LSApplicationLaunchArguments" "$INFO_PLIST_PATH" 2>/dev/null || true
-        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments array" "$INFO_PLIST_PATH"
-        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments:0 string -FIRDebugEnabled" "$INFO_PLIST_PATH"
-        echo "FIRDebugEnabled flag added."
-      else
-        handle_xcode_error "Info.plist not found at $INFO_PLIST_PATH"
-      fi
+    
+    # Firebase Debug View is automatically configured during Unity build
+    # The BuildScript.cs post-processing adds debug flags to Info.plist
+    # This works reliably for exported IPAs (not just Xcode runs)
 
     # Add step to clean DerivedData before Xcode build
     - echo "Ensuring clean build environment by removing previous DerivedData..."
@@ -645,6 +680,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
+        echo "🔥 Building with Firebase Debug enabled (configured in Info.plist by Unity BuildScript)..."
         xcodebuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
@@ -664,19 +700,19 @@ build_ios_ipa:
 
         echo "Exporting archive with automatic signing..."
 
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
-          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" ]; then
+          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
         fi
 
         # Simple export with automatic signing
-        echo "🎯 Exporting with automatic signing..."
+        echo "🎯 Exporting with development method (có thể cài trên máy macOS khác)..."
         OUTPUT_DIR="$CI_PROJECT_DIR/Build/iOS"
         mkdir -p "$OUTPUT_DIR"
 
         if xcodebuild -exportArchive \
             -archivePath "$ARCHIVE_PATH" \
             -exportPath "$OUTPUT_DIR/ExportedIPA_Dev" \
-            -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
+            -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" \
             -allowProvisioningUpdates \
             > "$EXPORT_LOG_PATH" 2>&1; then
 
@@ -694,7 +730,7 @@ build_ios_ipa:
           fi
 
         else
-          echo "❌ Export failed"
+          echo " Export failed"
           handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
         fi
 
@@ -705,6 +741,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
+        echo "🔥 Building with Firebase Debug enabled (configured in Info.plist by Unity BuildScript)..."
         xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
@@ -721,16 +758,16 @@ build_ios_ipa:
           handle_xcode_error "Nested frameworks fix failed" "$ARCHIVE_LOG_PATH"
         }
         echo "✅ Nested frameworks fixed"
-
         echo "Exporting archive with automatic signing..."
 
-        if [ ! -f "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" ]; then
-          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR"
+        if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" ]; then
+          handle_xcode_error "exportOptionsPlist_dev.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
         fi
 
+        echo "🎯 Exporting with development method (có thể cài trên máy macOS khác)..."
         xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
           -exportPath "$CI_PROJECT_DIR/Build/iOS/ExportedIPA_Dev" \
-          -exportOptionsPlist "$CI_PROJECT_DIR/exportOptionsPlist_dev.plist" \
+          -exportOptionsPlist "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist_dev.plist" \
           -allowProvisioningUpdates \
           -quiet \
           > "$EXPORT_LOG_PATH" 2>&1 || handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
@@ -745,7 +782,7 @@ build_ios_ipa:
           echo "✅ Found IPA: $IPA_FILE"
           echo "📊 IPA Size: $IPA_SIZE"
         else
-          echo "❌ Could not find IPA file"
+          echo " Could not find IPA file"
           echo "🔍 Available files:"
           find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" -o -name "*.app" 2>/dev/null | head -5 || echo "No files found"
         fi
@@ -758,7 +795,7 @@ build_ios_ipa:
   after_script:
     # Ensure we're in the correct working directory
     - echo "📍 Ensuring correct working directory..."
-    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - cd "$CI_PROJECT_DIR" || { echo " Failed to change to CI_PROJECT_DIR"; exit 1; }
     - echo "✅ Current directory $(pwd)"
 
     # Wait for file system sync (important on macOS APFS)
@@ -795,6 +832,46 @@ build_ios_ipa:
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
 
+    # ========================================
+    # 🧹 SMART STORAGE CLEANUP (After backup)
+    # ========================================
+    - echo ""
+    - echo "🧹 Starting smart storage cleanup..."
+    
+    # Check available disk space
+    - |
+      echo "📊 Checking disk space..."
+      AVAILABLE_GB=$(df -g . | tail -1 | awk '{print $4}')
+      echo "Available disk space: ${AVAILABLE_GB}GB"
+      
+      if [ "$AVAILABLE_GB" -lt 50 ]; then
+        echo "⚠️  Low disk space detected! Performing full cleanup..."
+        
+        # Clean DerivedData when space is low
+        echo "  → Cleaning DerivedData..."
+        rm -rf "$XCODE_DERIVED_DATA_PATH" || true
+        echo "  ✅ DerivedData cleaned"
+      else
+        echo "✅ Sufficient disk space (${AVAILABLE_GB}GB available)"
+        echo "  → Skipping DerivedData cleanup for faster incremental builds"
+      fi
+    
+    # Always clean build artifacts (one-time use, can't be reused)
+    - echo "  → Cleaning build artifacts..."
+    - rm -rf Build/iOS/*.xcarchive || true
+    - rm -rf Build/iOS/ExportedIPA_Dev || true
+    - echo "  ✅ Build artifacts cleaned"
+    
+    # Always clean log files
+    - echo "  → Cleaning log files..."
+    - rm -f *.log || true
+    - rm -f changelog.* || true
+    - echo "  ✅ Log files cleaned"
+    
+    - echo "✅ Smart cleanup completed!"
+    - echo "📊 Final disk space:"
+    - df -h | grep -E 'Filesystem|disk' || df -h
+
 
 
 build_xcode_project:
@@ -824,6 +901,6 @@ build_xcode_project:
       if [ -d "Build/iOS/Unity-iPhone.xcodeproj" ]; then
         echo "✅ Xcode project verified at Build/iOS/Unity-iPhone.xcodeproj"
       else
-        echo "❌ Xcode project not found!"
+        echo " Xcode project not found!"
         exit 1
       fi
