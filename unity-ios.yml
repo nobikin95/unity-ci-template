@@ -10,8 +10,8 @@ variables:
   - git submodule update --init Assets/cicd
   # Unshallow the submodule to get all commits (GitLab uses shallow clone by default)
   - cd Assets/cicd && git fetch --unshallow origin || git fetch origin && cd ../..
-  # Force checkout to latest commit from ios/stripe branch
-  - cd Assets/cicd && git fetch origin ios/stripe:ios/stripe && git checkout ios/stripe && cd ../..
+  # Checkout to ios/stripe branch and pull latest changes
+  - cd Assets/cicd && git checkout ios/stripe && git pull origin ios/stripe && cd ../..
   - echo "Assets/cicd submodule updated to latest commit:"
   - cd Assets/cicd && git log --oneline -1 && cd ../..
   # Clone all other submodules recursively (exclude Assets/cicd)
