@@ -164,12 +164,6 @@ variables:
       fi
     }
   - echo "Xcode project validation passed after framework verification."
-  
-  # Add Firebase Debug argument to Xcode scheme
-  - echo "🔥 Adding Firebase Debug argument to Xcode scheme..."
-  - chmod +x Assets/cicd/ci/add_firebase_debug_argument.py
-  - python3 Assets/cicd/ci/add_firebase_debug_argument.py Build/iOS
-  - echo "✅ Firebase Debug argument added to Xcode scheme"
 
 .common_update_version: &common_update_version
   - echo "Updating IOS_VERSION in GitLab CI/CD Variables..."
@@ -658,6 +652,12 @@ build_ios_ipa:
       when: manual
   script:
     - *common_build_steps
+    
+    # Add Firebase Debug argument to Xcode scheme (DEVELOPMENT BUILD ONLY)
+    - echo "🔥 Adding Firebase Debug argument to Xcode scheme..."
+    - chmod +x Assets/cicd/ci/add_firebase_debug_argument.py
+    - python3 Assets/cicd/ci/add_firebase_debug_argument.py Build/iOS
+    - echo "✅ Firebase Debug argument added to Xcode scheme"
     
     - MAIN_DEV="U043T5P1G9Z"
     # Firebase Debug View is automatically configured during Unity build
