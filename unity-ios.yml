@@ -806,7 +806,7 @@ build_ios_ipa:
       IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" | head -n 1)
       if [ -n "$IPA_FILE" ] && [ -f "$IPA_FILE" ]; then
         echo "Found IPA file: $IPA_FILE"
-        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_file_dm.py" "$IPA_FILE" "$MAIN_DEV" "IPA Build - $PROJECT_NAME v$CURRENT_VERSION" "$SLACK_BOT_TOKEN"
+        SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_file_dm.py" "$IPA_FILE" "IPA Build - $PROJECT_NAME v$CURRENT_VERSION" "$MAIN_DEV"
         echo "✅ IPA file sent to $MAIN_DEV via Slack"
       else
         echo "❌ No IPA file found to send via Slack"
