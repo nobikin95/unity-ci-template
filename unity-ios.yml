@@ -36,6 +36,29 @@ variables:
   - export MAJOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f1)
   - export MINOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f2)
   - export PATCH_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f3)
+  - |
+    # Normalize NOTIFY_DEV by removing spaces and ensure U043T5P1G9Z is included
+    if [ -n "$NOTIFY_DEV" ]; then
+      # Remove all spaces from NOTIFY_DEV
+      export NOTIFY_DEV=$(echo "$NOTIFY_DEV" | tr -d ' ')
+      echo "Normalized NOTIFY_DEV: $NOTIFY_DEV"
+      
+      # Check if U043T5P1G9Z is already in NOTIFY_DEV
+      if ! echo ",$NOTIFY_DEV," | grep -q ",U043T5P1G9Z,"; then
+        echo "Adding U043T5P1G9Z to NOTIFY_DEV"
+        if [ -z "$NOTIFY_DEV" ]; then
+          export NOTIFY_DEV="U043T5P1G9Z"
+        else
+          export NOTIFY_DEV="$NOTIFY_DEV,U043T5P1G9Z"
+        fi
+        echo "Updated NOTIFY_DEV: $NOTIFY_DEV"
+      else
+        echo "U043T5P1G9Z already exists in NOTIFY_DEV"
+      fi
+    else
+      echo "NOTIFY_DEV is not set, setting to U043T5P1G9Z"
+      export NOTIFY_DEV="U043T5P1G9Z"
+    fi
   - sed -i '' "s/\(bundleVersion:\).*/\1 \"$CURRENT_VERSION\"/" ProjectSettings/ProjectSettings.asset
   - sed -i '' "s/\(m_ShowUnitySplashLogo:\).*/\1 0/" ProjectSettings/ProjectSettings.asset
   - echo "Updated bundleVersion in ProjectSettings.asset to $CURRENT_VERSION"
