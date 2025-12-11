@@ -342,8 +342,8 @@ build_ios_release:
     # Fix MolocoSDK signature issue (revoked certificate)
     - echo "Applying MolocoSDK signature fix..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh"
-    - "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
-
+    - |
+      "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
 
@@ -641,8 +641,8 @@ build_ios_ipa:
     # Fix MolocoSDK signature issue (revoked certificate)
     - echo "Applying MolocoSDK signature fix..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh"
-    - "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
-
+    - |
+      "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
 
@@ -859,8 +859,8 @@ build_xcode_project:
     # Fix MolocoSDK signature issue (revoked certificate)
     - echo "Applying MolocoSDK signature fix..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh"
-    - "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
-    
+    - |
+      "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
     - echo "✅ Xcode project build completed successfully!"
     - echo "📁 Xcode project location Build/iOS/Unity-iPhone.xcodeproj"
     - |
