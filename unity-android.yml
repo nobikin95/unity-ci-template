@@ -58,6 +58,22 @@ variables:
     fi
   - export UNITY_PATH="${BASE_PATH}/Unity/Hub/Editor/${UNITY_VERSION}/Editor/Unity"
 
+  # Install xvfb for projects that need video rendering (e.g., VideoPlayer with RenderTexture)
+  # xvfb-run will be used as a wrapper around Unity build command
+  # This is opt-in via ENABLE_XVFB_FOR_VIDEO environment variable
+  - |
+    if [ "$ENABLE_XVFB_FOR_VIDEO" = "true" ]; then
+      echo "Checking xvfb installation for video rendering support...";
+      if ! command -v xvfb-run &> /dev/null; then
+        echo "Installing xvfb...";
+        sudo apt-get update -qq;
+        sudo apt-get install -y xvfb;
+        echo "✓ xvfb installed successfully";
+      else
+        echo "✓ xvfb already installed";
+      fi
+    fi
+
   - if [ -z "$SLACK_BOT_TOKEN" ]; then echo "SLACK_BOT_TOKEN is not set"; else echo $SLACK_BOT_TOKEN; fi
   - if [ -z "$SLACK_CHANNEL_ID" ]; then echo "SLACK_CHANNEL_ID is not set"; else echo $SLACK_CHANNEL_ID; fi
   - if [ -z "$GITLAB_API_TOKEN" ]; then echo "GITLAB_API_TOKEN is not set"; else echo $GITLAB_API_TOKEN; fi
@@ -303,7 +319,15 @@ variables:
 
         # Run Unity build
         # Build command with optional build options
-        local build_cmd="$UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -nographics -silent-crashes -quit"
+        # Use xvfb-run wrapper when ENABLE_XVFB_FOR_VIDEO is enabled for video rendering support
+        if [ "$ENABLE_XVFB_FOR_VIDEO" = "true" ]; then
+          # Use xvfb-run wrapper and remove -nographics to enable graphics device
+          local build_cmd="xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -silent-crashes -quit"
+        else
+          # Standard headless build (backward compatible)
+          local build_cmd="$UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -nographics -silent-crashes -quit"
+        fi
+        
         if [ -n "$build_options" ]; then
           build_cmd="$build_cmd $build_options"
         fi
