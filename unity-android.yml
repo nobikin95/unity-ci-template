@@ -323,14 +323,20 @@ variables:
         if [ "$ENABLE_XVFB_FOR_VIDEO" = "true" ]; then
           # Use xvfb-run wrapper and remove -nographics to enable graphics device
           local build_cmd="xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -silent-crashes -quit"
+          echo "🖥️  Using xvfb-run for video rendering support";
         else
           # Standard headless build (backward compatible)
           local build_cmd="$UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -nographics -silent-crashes -quit"
+          echo "Standard headless build (no graphics)";
         fi
         
         if [ -n "$build_options" ]; then
           build_cmd="$build_cmd $build_options"
         fi
+        
+        # Log the build command for debugging
+        echo "Executing Unity build command...";
+        echo "Command: ${build_cmd:0:150}..." # Show first 150 chars
         
         if eval "$build_cmd"; then
           echo "✓ Unity build succeeded on attempt $build_attempt";
