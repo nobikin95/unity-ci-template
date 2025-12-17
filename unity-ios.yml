@@ -800,16 +800,16 @@ build_ios_ipa:
     - cd "$CI_PROJECT_DIR"
     - *common_update_version
     
-    # Send IPA file to MAIN_DEV via Slack
+    # Upload IPA file to Slack channel
     - |
-      echo "📤 Sending IPA file to MAIN_DEV via Slack..."
+      echo "📤 Uploading IPA file to Slack channel..."
       IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" | head -n 1)
       if [ -n "$IPA_FILE" ] && [ -f "$IPA_FILE" ]; then
         echo "Found IPA file: $IPA_FILE"
-        SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_file_dm.py" "$IPA_FILE" "IPA Build - $PROJECT_NAME v$CURRENT_VERSION" "$MAIN_DEV"
-        echo "✅ IPA file sent to $MAIN_DEV via Slack"
+        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/upload_slack.py" "$IPA_FILE" "IPA Build - $PROJECT_NAME v$CURRENT_VERSION" "$SLACK_USER_IDS"
+        echo "✅ IPA file uploaded to Slack"
       else
-        echo "❌ No IPA file found to send via Slack"
+        echo "❌ No IPA file found to upload"
       fi
 
   after_script:
