@@ -652,6 +652,12 @@ build_ios_ipa:
   script:
     - *common_build_steps
     
+    # Add Firebase Debug argument to Xcode scheme (DEVELOPMENT BUILD ONLY)
+    - echo "🔥 Adding Firebase Debug argument to Xcode scheme..."
+    - chmod +x Assets/cicd/ci/add_firebase_debug_argument.py
+    - python3 Assets/cicd/ci/add_firebase_debug_argument.py Build/iOS
+    - echo "✅ Firebase Debug argument added to Xcode scheme"
+    
     - MAIN_DEV="U043T5P1G9Z"
     # Firebase Debug View is automatically configured during Unity build
     # The BuildScript.cs post-processing adds debug flags to Info.plist
@@ -776,16 +782,16 @@ build_ios_ipa:
     - cd "$CI_PROJECT_DIR"
     - *common_update_version
     
-    # Send IPA file to MAIN_DEV via Slack
+    # Upload IPA file to Slack channel
     - |
-      echo "📤 Sending IPA file to MAIN_DEV via Slack..."
+      echo "📤 Uploading IPA file to Slack channel..."
       IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" | head -n 1)
       if [ -n "$IPA_FILE" ] && [ -f "$IPA_FILE" ]; then
         echo "Found IPA file: $IPA_FILE"
-        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_file.py" "$IPA_FILE" "$MAIN_DEV" "IPA Build - $PROJECT_NAME v$CURRENT_VERSION" "$SLACK_BOT_TOKEN"
-        echo "✅ IPA file sent to $MAIN_DEV via Slack"
+        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/upload_slack.py" "$IPA_FILE" "IPA Build - $PROJECT_NAME v$CURRENT_VERSION" "$SLACK_USER_IDS"
+        echo "✅ IPA file uploaded to Slack"
       else
-        echo "❌ No IPA file found to send via Slack"
+        echo "❌ No IPA file found to upload"
       fi
 
   after_script:
