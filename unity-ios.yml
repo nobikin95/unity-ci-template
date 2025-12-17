@@ -92,6 +92,22 @@ variables:
         # Unity build
         echo "Running Unity build command with UNITY_PATH=$UNITY_PATH"
         $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget iOS -executeMethod BuildScript.BuildiOS -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
+          echo "Unity build failed. Checking for validation errors...";
+          
+          # Check if this is a validation error (BuildFailedException)
+          if grep -q "BuildFailedException" "$CI_PROJECT_DIR/build_output.log"; then
+            echo "⚠️  Detected Build Validation Failure - validation errors cannot be fixed by retrying";
+            echo "Error details:";
+            grep -B 3 -A 3 "BuildFailedException" "$CI_PROJECT_DIR/build_output.log" | head -n 20 || echo "Could not extract error details";
+            echo "✗ Build validation failed. This is a logic/data error that requires code/asset fixes.";
+            
+            # Send notifications and exit without retry
+            python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+            python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+            exit 1;
+          fi
+          
+          # Non-validation error - show log and fail
           echo "Unity build failed. Output log:";
           tail -n 50 $CI_PROJECT_DIR/build_output.log;
           python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";

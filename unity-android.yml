@@ -221,6 +221,9 @@ variables:
       # Prepare detailed message based on error type
       local detailed_message=""
       case "$error_type" in
+        "VALIDATION")
+          detailed_message="⚠️ *Loại lỗi:* Build Validation Failed\n📋 *Nguyên nhân:* Unity PreprocessBuild validation check failed\n💡 *Khuyến nghị:*\n  • Kiểm tra Unity build log để xem validation error chi tiết\n  • Fix data/logic issue trong Assets/Editor validation scripts\n  • Validation errors KHÔNG thể fix bằng retry\n  • Check Slack notification (nếu có) để biết validator nào fail"
+          ;;
         "GRADLE")
           if grep -q "Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
             detailed_message="🔧 *Loại lỗi:* Gradle Daemon Stopped\n📋 *Nguyên nhân:* Gradle build daemon bị dừng đột ngột\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory exhaustion hoặc daemon crash\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần và restart daemon\n  • Nếu vẫn fail, kiểm tra memory usage và Gradle cache"
@@ -404,16 +407,27 @@ variables:
               return 1;
             fi
           else
-            echo "✗ Non-Gradle failure detected. Not retrying.";
-            echo "Checking error type...";
+            echo "✗ Non-Gradle failure detected. Checking error type...";
             local error_type=$(detect_error_type "$log_file")
             echo "Detected error type: $error_type";
+            
+            # Check if this is a validation error (BuildFailedException)
+            if grep -q "BuildFailedException" "$log_file"; then
+              echo "⚠️  Detected Build Validation Failure - validation errors cannot be fixed by retrying";
+              echo "Error details:";
+              grep -B 3 -A 3 "BuildFailedException" "$log_file" | head -n 20 || echo "Could not extract error details";
+              
+              # Validation failure - don't retry, fail immediately
+              echo "✗ Build validation failed. This is a logic/data error that requires code/asset fixes.";
+              send_build_failure_notification "VALIDATION_ERROR"
+              return 1;
+            fi
             
             # Show last 20 lines of log for debugging
             echo "Last 20 lines of build log:";
             tail -n 20 "$log_file";
             
-            # Non-Gradle failure (likely compilation error) - send notification immediately
+            # Non-Gradle, non-validation failure (likely compilation error) - send notification immediately
             if [ "$error_type" = "COMPILATION" ]; then
               send_build_failure_notification "COMPILATION_ERROR"
             else
