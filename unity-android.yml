@@ -136,6 +136,22 @@ variables:
     fi
   - export UNITY_PATH="${BASE_PATH}/Unity/Hub/Editor/${UNITY_VERSION}/Editor/Unity"
 
+  # Install xvfb for projects that need video rendering (e.g., VideoPlayer with RenderTexture)
+  # xvfb-run will be used as a wrapper around Unity build command
+  # This is opt-in via ENABLE_XVFB_FOR_VIDEO environment variable
+  - |
+    if [ "$ENABLE_XVFB_FOR_VIDEO" = "true" ]; then
+      echo "Checking xvfb installation for video rendering support...";
+      if ! command -v xvfb-run &> /dev/null; then
+        echo "Installing xvfb...";
+        sudo apt-get update -qq;
+        sudo apt-get install -y xvfb;
+        echo "✓ xvfb installed successfully";
+      else
+        echo "✓ xvfb already installed";
+      fi
+    fi
+
   - if [ -z "$SLACK_BOT_TOKEN" ]; then echo "SLACK_BOT_TOKEN is not set"; else echo $SLACK_BOT_TOKEN; fi
   - if [ -z "$SLACK_CHANNEL_ID" ]; then echo "SLACK_CHANNEL_ID is not set"; else echo $SLACK_CHANNEL_ID; fi
   - if [ -z "$GITLAB_API_TOKEN" ]; then echo "GITLAB_API_TOKEN is not set"; else echo $GITLAB_API_TOKEN; fi
@@ -167,6 +183,29 @@ variables:
   - export MINOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f2)
   - export PATCH_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f3)
   - echo $CURRENT_VERSION
+  - |
+    # Normalize NOTIFY_DEV by removing spaces and ensure U043T5P1G9Z is included
+    if [ -n "$NOTIFY_DEV" ]; then
+      # Remove all spaces from NOTIFY_DEV
+      export NOTIFY_DEV=$(echo "$NOTIFY_DEV" | tr -d ' ')
+      echo "Normalized NOTIFY_DEV: $NOTIFY_DEV"
+      
+      # Check if U043T5P1G9Z is already in NOTIFY_DEV
+      if ! echo ",$NOTIFY_DEV," | grep -q ",U043T5P1G9Z,"; then
+        echo "Adding U043T5P1G9Z to NOTIFY_DEV"
+        if [ -z "$NOTIFY_DEV" ]; then
+          export NOTIFY_DEV="U043T5P1G9Z"
+        else
+          export NOTIFY_DEV="$NOTIFY_DEV,U043T5P1G9Z"
+        fi
+        echo "Updated NOTIFY_DEV: $NOTIFY_DEV"
+      else
+        echo "U043T5P1G9Z already exists in NOTIFY_DEV"
+      fi
+    else
+      echo "NOTIFY_DEV is not set, setting to U043T5P1G9Z"
+      export NOTIFY_DEV="U043T5P1G9Z"
+    fi
   # Update bundleVersion in ProjectSettings.asset
   - sed -i "s/\(bundleVersion:[[:space:]]*\).*/\1\"$CURRENT_VERSION\"/" ProjectSettings/ProjectSettings.asset
   - sed -i "s/\(m_ShowUnitySplashLogo:\).*/\1 0/" ProjectSettings/ProjectSettings.asset
@@ -188,7 +227,7 @@ variables:
       fi
 
       # Check for Gradle errors (higher priority as they occur later in build)
-      if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task" "$log_file"; then
+      if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task\|Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
         echo "GRADLE"
         return
       fi
@@ -223,7 +262,7 @@ variables:
       case "$error_type" in
         "GRADLE")
           # Extract Gradle error details
-          grep -A 3 "Execution failed for task\|PackageAndroidArtifact\|Gradle build failed" "$log_file" | head -n $max_lines
+          grep -A 3 "Execution failed for task\|PackageAndroidArtifact\|Gradle build failed\|Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file" | head -n $max_lines
           ;;
         "COMPILATION")
           # Extract compilation errors
@@ -260,8 +299,15 @@ variables:
       # Prepare detailed message based on error type
       local detailed_message=""
       case "$error_type" in
+        "VALIDATION")
+          detailed_message="⚠️ *Loại lỗi:* Build Validation Failed\n📋 *Nguyên nhân:* Unity PreprocessBuild validation check failed\n💡 *Khuyến nghị:*\n  • Kiểm tra Unity build log để xem validation error chi tiết\n  • Fix data/logic issue trong Assets/Editor validation scripts\n  • Validation errors KHÔNG thể fix bằng retry\n  • Check Slack notification (nếu có) để biết validator nào fail"
+          ;;
         "GRADLE")
-          detailed_message="🔧 *Loại lỗi:* Gradle Build Failure\n📋 *Nguyên nhân:* Lỗi khi package APK (PackageAndroidArtifact)\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory hoặc Gradle cache\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần\n  • Nếu vẫn fail, thử restart pipeline hoặc clean build"
+          if grep -q "Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
+            detailed_message="🔧 *Loại lỗi:* Gradle Daemon Stopped\n📋 *Nguyên nhân:* Gradle build daemon bị dừng đột ngột\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory exhaustion hoặc daemon crash\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần và restart daemon\n  • Nếu vẫn fail, kiểm tra memory usage và Gradle cache"
+          else
+            detailed_message="🔧 *Loại lỗi:* Gradle Build Failure\n📋 *Nguyên nhân:* Lỗi khi package APK (PackageAndroidArtifact)\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory hoặc Gradle cache\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần\n  • Nếu vẫn fail, thử restart pipeline hoặc clean build"
+          fi
           ;;
         "COMPILATION")
           detailed_message="💻 *Loại lỗi:* Compilation Error\n📋 *Nguyên nhân:* Lỗi biên dịch C# code\n💡 *Khuyến nghị:*\n  • Kiểm tra code changes gần nhất\n  • Xem chi tiết lỗi trong log bên dưới\n  • Fix code và commit lại"
@@ -313,15 +359,18 @@ variables:
       echo "Build failure notifications sent.";
     }
 
-  # Helper function to retry Unity build with automatic Gradle failure detection
+  # Helper function to retry Unity build với khả năng phát hiện lỗi Gradle và kiểm tra artifact
   # Usage: retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK"
   #        retry_unity_build_with_gradle_detection "BuildScript.BuildAAB" "Build/Android/${AAB_NAME}" "AAB"
+  #        retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" "" "-buildOption=\"${SELECTED_BUILD_OPTIONS}\""
   - |
     retry_unity_build_with_gradle_detection() {
       local build_method="${1:-BuildScript.BuildAPK}"  # Unity build method to execute
       local build_path="${2}"                           # Output path for build artifact
       local build_type_name="${3:-APK}"                 # Build type name for logging
       local max_retry_attempts="${MAX_RETRY_ATTEMPTS:-2}"  # Number of retries (default: 2)
+      local build_options="${4:-}"                      # Additional build options (e.g., -buildOption="...")
+      local expected_artifact="${5:-$build_path}"       # Expected artifact path to verify after build
       
       local build_attempt=0
       local build_success=false
@@ -350,8 +399,51 @@ variables:
         fi
 
         # Run Unity build
-        if $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod "$build_method" -buildPath="$build_path" -logFile "$log_file" -batchmode -nographics -silent-crashes -quit; then
+        # Build command with optional build options
+        # Use xvfb-run wrapper when ENABLE_XVFB_FOR_VIDEO is enabled for video rendering support
+        if [ "$ENABLE_XVFB_FOR_VIDEO" = "true" ]; then
+          # Use xvfb-run wrapper and remove -nographics to enable graphics device
+          local build_cmd="xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -silent-crashes -quit"
+          echo "🖥️  Using xvfb-run for video rendering support";
+        else
+          # Standard headless build (backward compatible)
+          local build_cmd="$UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -nographics -silent-crashes -quit"
+          echo "Standard headless build (no graphics)";
+        fi
+        
+        if [ -n "$build_options" ]; then
+          build_cmd="$build_cmd $build_options"
+        fi
+        
+        # Log the build command for debugging
+        echo "Executing Unity build command...";
+        echo "Command: ${build_cmd:0:150}..." # Show first 150 chars
+        
+        if eval "$build_cmd"; then
           echo "✓ Unity build succeeded on attempt $build_attempt";
+
+          # Verify expected artifact exists
+          if [ -n "$expected_artifact" ] && [ ! -f "$expected_artifact" ]; then
+            echo "✗ Build reported success but artifact '$expected_artifact' not found.";
+
+            if [ $build_attempt -lt $max_total_attempts ]; then
+              echo "⟳ Retrying because artifact is missing (attempt $((build_attempt + 1))/$max_total_attempts)...";
+              sleep 10;
+              continue
+            else
+              local missing_context="FILE_MISSING"
+              if [ "$build_type_name" = "APK" ]; then
+                missing_context="APK_FILE_MISSING"
+              elif [ "$build_type_name" = "AAB" ]; then
+                missing_context="AAB_FILE_MISSING"
+              fi
+
+              echo "✗ Artifact still missing after retries ($expected_artifact).";
+              send_build_failure_notification "$missing_context"
+              return 1
+            fi
+          fi
+
           build_success=true
           break
         else
@@ -359,10 +451,27 @@ variables:
           echo "✗ Unity build failed on attempt $build_attempt with exit code $build_exit_code";
 
           # Check if this is a Gradle-related failure
-          if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task.*:launcher:package" "$log_file"; then
+          if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task.*:launcher:package\|Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
             echo "⚠ Detected Gradle build failure in logs";
             echo "Error details:";
-            grep -A 5 "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task.*:launcher:package" "$log_file" | head -n 10 || echo "Could not extract error details";
+            grep -A 5 "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task.*:launcher:package\|Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file" | head -n 15 || echo "Could not extract error details";
+            
+            # If daemon stopped, try to kill and restart it
+            if grep -q "Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
+              echo "🔄 Detected Gradle daemon stopped. Attempting to stop all Gradle daemons before retry...";
+              # Stop all Gradle daemons to ensure clean state
+              cd "$CI_PROJECT_DIR" || cd "$(find . -name "*.gradle" -type f | head -1 | xargs dirname)" 2>/dev/null || true;
+              if command -v gradle &> /dev/null; then
+                gradle --stop 2>/dev/null || echo "Could not stop Gradle daemon (may not be installed globally)";
+              fi
+              # Also try to stop via Unity's Gradle wrapper if available
+              if [ -f "Library/Bee/Android/Prj/IL2CPP/Gradle/gradlew" ]; then
+                cd "Library/Bee/Android/Prj/IL2CPP/Gradle" && ./gradlew --stop 2>/dev/null || echo "Could not stop Gradle daemon via wrapper";
+                cd "$CI_PROJECT_DIR";
+              fi
+              echo "Waiting 15 seconds for Gradle daemon to fully stop...";
+              sleep 15;
+            fi
 
             if [ $build_attempt -lt $max_total_attempts ]; then
               echo "⟳ Retrying build immediately (attempt $((build_attempt + 1))/$max_total_attempts)...";
@@ -376,16 +485,27 @@ variables:
               return 1;
             fi
           else
-            echo "✗ Non-Gradle failure detected. Not retrying.";
-            echo "Checking error type...";
+            echo "✗ Non-Gradle failure detected. Checking error type...";
             local error_type=$(detect_error_type "$log_file")
             echo "Detected error type: $error_type";
+            
+            # Check if this is a validation error (BuildFailedException)
+            if grep -q "BuildFailedException" "$log_file"; then
+              echo "⚠️  Detected Build Validation Failure - validation errors cannot be fixed by retrying";
+              echo "Error details:";
+              grep -B 3 -A 3 "BuildFailedException" "$log_file" | head -n 20 || echo "Could not extract error details";
+              
+              # Validation failure - don't retry, fail immediately
+              echo "✗ Build validation failed. This is a logic/data error that requires code/asset fixes.";
+              send_build_failure_notification "VALIDATION_ERROR"
+              return 1;
+            fi
             
             # Show last 20 lines of log for debugging
             echo "Last 20 lines of build log:";
             tail -n 20 "$log_file";
             
-            # Non-Gradle failure (likely compilation error) - send notification immediately
+            # Non-Gradle, non-validation failure (likely compilation error) - send notification immediately
             if [ "$error_type" = "COMPILATION" ]; then
               send_build_failure_notification "COMPILATION_ERROR"
             else
@@ -620,7 +740,6 @@ build_apk_and_verify:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-      - script_failure
   needs:
     - job: upload_internal
       optional: true
@@ -839,7 +958,6 @@ build_apk_and_verify_manual:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-      - script_failure
   needs: []
   before_script:
     - export BUILD_TYPE="📱APK"
@@ -1054,7 +1172,6 @@ build_aab:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-      - script_failure
   needs: []
   before_script:
     - export BUILD_TYPE="📱AAB"
@@ -1241,58 +1358,11 @@ build_apk_by_tag:
     - start=$(date +%s)
 
     # Unity build with automatic retry on Gradle failures
-    # This handles intermittent PackageAndroidArtifact failures by retrying immediately with existing cache
-    # MAX_RETRY_ATTEMPTS=1 means: 1 initial build + 1 retry = 2 total attempts
-    - |
-      MAX_RETRY_ATTEMPTS=1
-      BUILD_ATTEMPT=0
-      BUILD_SUCCESS=false
-      MAX_TOTAL_ATTEMPTS=$((MAX_RETRY_ATTEMPTS + 1))
-
-      while [ $BUILD_ATTEMPT -lt $MAX_TOTAL_ATTEMPTS ]; do
-        BUILD_ATTEMPT=$((BUILD_ATTEMPT + 1))
-        echo "========================================";
-        echo "Unity build attempt $BUILD_ATTEMPT of $MAX_TOTAL_ATTEMPTS";
-        echo "========================================";
-
-        if $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit; then
-          echo "✓ Unity build succeeded on attempt $BUILD_ATTEMPT";
-          BUILD_SUCCESS=true
-          break
-        else
-          BUILD_EXIT_CODE=$?
-          echo "✗ Unity build failed on attempt $BUILD_ATTEMPT with exit code $BUILD_EXIT_CODE";
-
-          # Check if this is a Gradle-related failure
-          if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed" $CI_PROJECT_DIR/build_output.log; then
-            echo "⚠ Detected Gradle build failure in logs";
-
-            if [ $BUILD_ATTEMPT -lt $MAX_TOTAL_ATTEMPTS ]; then
-              echo "⟳ Retrying build immediately (using existing Gradle cache)...";
-              echo "Waiting 5 seconds before retry...";
-              sleep 5;
-              continue
-            else
-              echo "✗ Max retries reached ($MAX_RETRY_ATTEMPTS retry after initial build). Build failed.";
-              # Gradle failure after exhausting all retries
-              send_build_failure_notification "GRADLE_RETRY_EXHAUSTED"
-              exit 1;
-            fi
-          else
-            echo "✗ Non-Gradle failure detected. Not retrying.";
-            # Non-Gradle failure (likely compilation error)
-            send_build_failure_notification "COMPILATION_ERROR"
-            exit 1;
-          fi
-        fi
-      done
-
-      if [ "$BUILD_SUCCESS" = false ]; then
-        echo "✗ Build failed after $MAX_TOTAL_ATTEMPTS total attempts (1 initial + $MAX_RETRY_ATTEMPTS retry)";
-        # This should not be reached, but handle it anyway
-        send_build_failure_notification "BUILD_FAILED_UNKNOWN"
+    # Using centralized helper function for consistent retry logic
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+        echo "Error... Unity build failed after retries.";
         exit 1;
-      fi
+      }
 
     - end=$(date +%s)
     - echo "Time taken... $((end-start)) seconds"

@@ -36,6 +36,29 @@ variables:
   - export MAJOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f1)
   - export MINOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f2)
   - export PATCH_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f3)
+  - |
+    # Normalize NOTIFY_DEV by removing spaces and ensure U043T5P1G9Z is included
+    if [ -n "$NOTIFY_DEV" ]; then
+      # Remove all spaces from NOTIFY_DEV
+      export NOTIFY_DEV=$(echo "$NOTIFY_DEV" | tr -d ' ')
+      echo "Normalized NOTIFY_DEV: $NOTIFY_DEV"
+      
+      # Check if U043T5P1G9Z is already in NOTIFY_DEV
+      if ! echo ",$NOTIFY_DEV," | grep -q ",U043T5P1G9Z,"; then
+        echo "Adding U043T5P1G9Z to NOTIFY_DEV"
+        if [ -z "$NOTIFY_DEV" ]; then
+          export NOTIFY_DEV="U043T5P1G9Z"
+        else
+          export NOTIFY_DEV="$NOTIFY_DEV,U043T5P1G9Z"
+        fi
+        echo "Updated NOTIFY_DEV: $NOTIFY_DEV"
+      else
+        echo "U043T5P1G9Z already exists in NOTIFY_DEV"
+      fi
+    else
+      echo "NOTIFY_DEV is not set, setting to U043T5P1G9Z"
+      export NOTIFY_DEV="U043T5P1G9Z"
+    fi
   - sed -i '' "s/\(bundleVersion:\).*/\1 \"$CURRENT_VERSION\"/" ProjectSettings/ProjectSettings.asset
   - sed -i '' "s/\(m_ShowUnitySplashLogo:\).*/\1 0/" ProjectSettings/ProjectSettings.asset
   - echo "Updated bundleVersion in ProjectSettings.asset to $CURRENT_VERSION"
@@ -110,6 +133,22 @@ variables:
         # Unity build
         echo "Running Unity build command with UNITY_PATH=$UNITY_PATH"
         $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget iOS -executeMethod BuildScript.BuildiOS -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
+          echo "Unity build failed. Checking for validation errors...";
+          
+          # Check if this is a validation error (BuildFailedException)
+          if grep -q "BuildFailedException" "$CI_PROJECT_DIR/build_output.log"; then
+            echo "⚠️  Detected Build Validation Failure - validation errors cannot be fixed by retrying";
+            echo "Error details:";
+            grep -B 3 -A 3 "BuildFailedException" "$CI_PROJECT_DIR/build_output.log" | head -n 20 || echo "Could not extract error details";
+            echo "✗ Build validation failed. This is a logic/data error that requires code/asset fixes.";
+            
+            # Send notifications and exit without retry
+            python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+            python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+            exit 1;
+          fi
+          
+          # Non-validation error - show log and fail
           echo "Unity build failed. Output log:";
           tail -n 50 $CI_PROJECT_DIR/build_output.log;
           python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
@@ -151,7 +190,7 @@ variables:
         else
           verify_exit_code=$?
           echo ""
-          echo "❌ Framework verification failed with exit code $verify_exit_code"
+          echo " Framework verification failed with exit code $verify_exit_code"
           echo ""
           
           retry_count=$((retry_count + 1))
@@ -163,7 +202,7 @@ variables:
             sleep 10
           else
             echo ""
-            echo "❌ Framework verification failed after $max_retries attempts."
+            echo " Framework verification failed after $max_retries attempts."
             echo "📋 Final missing frameworks:"
             echo ""
             Assets/cicd/ci/verify_frameworks.sh || echo "Framework verification script failed"
@@ -381,6 +420,11 @@ build_ios_release:
     - echo "Ensuring clean build environment by removing previous DerivedData..."
     - rm -rf "$XCODE_DERIVED_DATA_PATH"
 
+    # Fix MolocoSDK signature issue (revoked certificate)
+    - echo "Applying MolocoSDK signature fix..."
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh"
+    - |
+      "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
 
@@ -499,7 +543,7 @@ build_ios_release:
       if fastlane upload_testflight 2>&1 | tee fastlane_upload.log; then
         echo "✅ Successfully uploaded IPA to TestFlight!"
       else
-        echo "❌ Fastlane upload failed. Check fastlane_upload.log for details."
+        echo " Fastlane upload failed. Check fastlane_upload.log for details."
         tail -n 100 fastlane_upload.log
         handle_xcode_error "Fastlane upload to TestFlight failed" "fastlane_upload.log"
       fi
@@ -550,7 +594,7 @@ build_ios_release:
   after_script:
     # Ensure we're in the correct working directory
     - echo "📍 Ensuring correct working directory..."
-    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - cd "$CI_PROJECT_DIR" || { echo " Failed to change to CI_PROJECT_DIR"; exit 1; }
     - echo "✅ Current directory $(pwd)"
 
     # Wait for file system sync (important on macOS APFS)
@@ -586,6 +630,33 @@ build_ios_release:
     - echo "🔧 Starting full project backup with enhanced verification..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
+
+    # ========================================
+    # 🧹 STORAGE CLEANUP (After backup)
+    # ========================================
+    - echo ""
+    - echo "🧹 Starting storage cleanup to free disk space..."
+    
+    # 1. Clean DerivedData (CRITICAL - 5-15GB)
+    - echo "  → Cleaning DerivedData..."
+    - rm -rf "$XCODE_DERIVED_DATA_PATH" || true
+    - echo "  ✅ DerivedData cleaned"
+    
+    # 2. Clean build artifacts (IMPORTANT - 10-15GB)
+    - echo "  → Cleaning archives and exported IPAs..."
+    - rm -rf Build/iOS/*.xcarchive || true
+    - rm -rf Build/iOS/ExportedIPA_Release || true
+    - echo "  ✅ Build artifacts cleaned"
+    
+    # 3. Clean log files
+    - echo "  → Cleaning log files..."
+    - rm -f *.log || true
+    - rm -f changelog.* || true
+    - echo "  ✅ Log files cleaned"
+    
+    - echo "✅ Storage cleanup completed!"
+    - echo "📊 Remaining disk space:"
+    - df -h | grep -E 'Filesystem|disk' || df -h
 
   artifacts:
     paths:
@@ -639,22 +710,27 @@ build_ios_ipa:
   script:
     - *setup_screwdom
     - *common_build_steps
-    - echo "Adding FIRDebugEnabled flag to Info.plist..."
-    - INFO_PLIST_PATH="Build/iOS/Info.plist"
-    - | # Use block scalar for multi-line if statement
-      if [ -f "$INFO_PLIST_PATH" ]; then
-        /usr/libexec/PlistBuddy -c "Delete :LSApplicationLaunchArguments" "$INFO_PLIST_PATH" 2>/dev/null || true
-        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments array" "$INFO_PLIST_PATH"
-        /usr/libexec/PlistBuddy -c "Add :LSApplicationLaunchArguments:0 string -FIRDebugEnabled" "$INFO_PLIST_PATH"
-        echo "FIRDebugEnabled flag added."
-      else
-        handle_xcode_error "Info.plist not found at $INFO_PLIST_PATH"
-      fi
+    
+    # Add Firebase Debug argument to Xcode scheme (DEVELOPMENT BUILD ONLY)
+    - echo "🔥 Adding Firebase Debug argument to Xcode scheme..."
+    - chmod +x Assets/cicd/ci/add_firebase_debug_argument.py
+    - python3 Assets/cicd/ci/add_firebase_debug_argument.py Build/iOS
+    - echo "✅ Firebase Debug argument added to Xcode scheme"
+    
+    - MAIN_DEV="U043T5P1G9Z"
+    # Firebase Debug View is automatically configured during Unity build
+    # The BuildScript.cs post-processing adds debug flags to Info.plist
+    # This works reliably for exported IPAs (not just Xcode runs)
 
     # Add step to clean DerivedData before Xcode build
     - echo "Ensuring clean build environment by removing previous DerivedData..."
     - rm -rf "$XCODE_DERIVED_DATA_PATH"
 
+    # Fix MolocoSDK signature issue (revoked certificate)
+    - echo "Applying MolocoSDK signature fix..."
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh"
+    - |
+      "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
 
@@ -670,7 +746,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
-        echo "🔥 Building với -FIRDebugEnabled flag (đã được thêm vào Info.plist)..."
+        echo "🔥 Building with Firebase Debug enabled (configured in Info.plist by Unity BuildScript)..."
         xcodebuild -workspace Unity-iPhone.xcworkspace -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
@@ -711,7 +787,7 @@ build_ios_ipa:
           fi
 
         else
-          echo "❌ Export failed"
+          echo " Export failed"
           handle_xcode_error "Xcode export step failed." "$EXPORT_LOG_PATH"
         fi
 
@@ -722,7 +798,7 @@ build_ios_ipa:
         export ARCHIVE_LOG_PATH="$CI_PROJECT_DIR/archive_dev.log"
 
         echo "Archiving to $ARCHIVE_PATH"
-        echo "🔥 Building với -FIRDebugEnabled flag (đã được thêm vào Info.plist)..."
+        echo "🔥 Building with Firebase Debug enabled (configured in Info.plist by Unity BuildScript)..."
         xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release \
           -archivePath "$ARCHIVE_PATH" \
           -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
@@ -755,7 +831,7 @@ build_ios_ipa:
           echo "✅ Found IPA: $IPA_FILE"
           echo "📊 IPA Size: $IPA_SIZE"
         else
-          echo "❌ Could not find IPA file"
+          echo " Could not find IPA file"
           echo "🔍 Available files:"
           find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" -o -name "*.app" 2>/dev/null | head -5 || echo "No files found"
         fi
@@ -764,11 +840,23 @@ build_ios_ipa:
       fi
     - cd "$CI_PROJECT_DIR"
     - *common_update_version
+    
+    # Upload IPA file to Slack channel
+    - |
+      echo "📤 Uploading IPA file to Slack channel..."
+      IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" | head -n 1)
+      if [ -n "$IPA_FILE" ] && [ -f "$IPA_FILE" ]; then
+        echo "Found IPA file: $IPA_FILE"
+        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/upload_slack.py" "$IPA_FILE" "IPA Build - $PROJECT_NAME v$CURRENT_VERSION" "$SLACK_USER_IDS"
+        echo "✅ IPA file uploaded to Slack"
+      else
+        echo "❌ No IPA file found to upload"
+      fi
 
   after_script:
     # Ensure we're in the correct working directory
     - echo "📍 Ensuring correct working directory..."
-    - cd "$CI_PROJECT_DIR" || { echo "❌ Failed to change to CI_PROJECT_DIR"; exit 1; }
+    - cd "$CI_PROJECT_DIR" || { echo " Failed to change to CI_PROJECT_DIR"; exit 1; }
     - echo "✅ Current directory $(pwd)"
 
     # Wait for file system sync (important on macOS APFS)
@@ -805,6 +893,33 @@ build_ios_ipa:
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
 
+    # ========================================
+    # 🧹 STORAGE CLEANUP (After backup)
+    # ========================================
+    - echo ""
+    - echo "🧹 Starting storage cleanup to free disk space..."
+    
+    # 1. Clean DerivedData (CRITICAL - 5-15GB)
+    - echo "  → Cleaning DerivedData..."
+    - rm -rf "$XCODE_DERIVED_DATA_PATH" || true
+    - echo "  ✅ DerivedData cleaned"
+    
+    # 2. Clean build artifacts (IMPORTANT - 10-15GB)
+    - echo "  → Cleaning archives and exported IPAs..."
+    - rm -rf Build/iOS/*.xcarchive || true
+    - rm -rf Build/iOS/ExportedIPA_Dev || true
+    - echo "  ✅ Build artifacts cleaned"
+    
+    # 3. Clean log files
+    - echo "  → Cleaning log files..."
+    - rm -f *.log || true
+    - rm -f changelog.* || true
+    - echo "  ✅ Log files cleaned"
+    
+    - echo "✅ Storage cleanup completed!"
+    - echo "📊 Remaining disk space:"
+    - df -h | grep -E 'Filesystem|disk' || df -h
+
 
 
 build_xcode_project:
@@ -829,12 +944,18 @@ build_xcode_project:
   script:
     - *setup_screwdom
     - *common_build_steps
+    
+    # Fix MolocoSDK signature issue (revoked certificate)
+    - echo "Applying MolocoSDK signature fix..."
+    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh"
+    - |
+      "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
     - echo "✅ Xcode project build completed successfully!"
     - echo "📁 Xcode project location Build/iOS/Unity-iPhone.xcodeproj"
     - |
       if [ -d "Build/iOS/Unity-iPhone.xcodeproj" ]; then
         echo "✅ Xcode project verified at Build/iOS/Unity-iPhone.xcodeproj"
       else
-        echo "❌ Xcode project not found!"
+        echo " Xcode project not found!"
         exit 1
       fi
