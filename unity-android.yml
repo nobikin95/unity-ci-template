@@ -553,6 +553,94 @@ variables:
       echo "  Successfully patched: $patched_count";
       echo "  Skipped (already patched or no target): $skipped_count";
       echo "========================================";
+
+      # Patch IKameAdjust.cs
+      echo "";
+      echo "========================================";
+      echo "Searching for IKameAdjust.cs files to patch...";
+      echo "========================================";
+
+      # Array to store all found IKameAdjust.cs files
+      IKAME_ADJUST_FILES=()
+
+      # 1. Search in Library/PackageCache (package manager location)
+      echo "Searching in Library/PackageCache...";
+      while IFS= read -r file; do
+        [ -n "$file" ] && IKAME_ADJUST_FILES+=("$file")
+      done < <(find Library/PackageCache -name "IKameAdjust.cs" -type f 2>/dev/null)
+
+      # 2. Search in Assets
+      echo "Searching in Assets...";
+      while IFS= read -r file; do
+        [ -n "$file" ] && IKAME_ADJUST_FILES+=("$file")
+      done < <(find Assets -name "IKameAdjust.cs" -type f 2>/dev/null)
+
+      # Check if any files found
+      if [ ${#IKAME_ADJUST_FILES[@]} -eq 0 ]; then
+        echo "⚠ WARNING: No IKameAdjust.cs files found. Skipping patch.";
+      else
+        echo "✓ Found ${#IKAME_ADJUST_FILES[@]} IKameAdjust.cs file(s):";
+        for file in "${IKAME_ADJUST_FILES[@]}"; do
+          echo "  - $file";
+        done
+        echo "";
+
+        # Patch each file
+        local ikame_patched_count=0
+        local ikame_skipped_count=0
+
+        for IKAME_ADJUST_CS in "${IKAME_ADJUST_FILES[@]}"; do
+          echo "Processing: $IKAME_ADJUST_CS";
+
+          # Check if already patched
+          if grep -q "#if VERIFY_TOKEN" "$IKAME_ADJUST_CS"; then
+            echo "  ⊘ VERIFY_TOKEN block already present. Skipping.";
+            ikame_skipped_count=$((ikame_skipped_count + 1))
+            continue
+          fi
+
+          # Check if target line exists
+          if ! grep -q "if (!this\.startManually)" "$IKAME_ADJUST_CS"; then
+            echo "  ⚠ Target line 'if (!this.startManually)' not found. Skipping.";
+            ikame_skipped_count=$((ikame_skipped_count + 1))
+            continue
+          fi
+
+          # Apply patch
+          awk '
+          BEGIN { inserted=0 }
+          {
+            if (!inserted && $0 ~ /if \(!this\.startManually\)/) {
+              match($0, /^[[:space:]]*]/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "this.environment = AdjustEnvironment.Sandbox;";
+              print indent "this.logLevel = AdjustLogLevel.Verbose;";
+              print "#else";
+              print indent "this.environment = AdjustEnvironment.Production;";
+              print indent "this.logLevel = AdjustLogLevel.Error;";
+              print "#endif";
+              inserted=1;
+            }
+            print $0;
+          }' "$IKAME_ADJUST_CS" > "$IKAME_ADJUST_CS.tmp" && mv "$IKAME_ADJUST_CS.tmp" "$IKAME_ADJUST_CS"
+
+          if [ $? -eq 0 ]; then
+            echo "  ✓ Successfully patched!";
+            ikame_patched_count=$((ikame_patched_count + 1))
+          else
+            echo "  ✗ Failed to patch!";
+          fi
+        done
+
+        echo "";
+        echo "========================================";
+        echo "IKameAdjust.cs Patch Summary:";
+        echo "  Total files found: ${#IKAME_ADJUST_FILES[@]}";
+        echo "  Successfully patched: $ikame_patched_count";
+        echo "  Skipped (already patched or no target): $ikame_skipped_count";
+        echo "========================================";
+      fi
     }
 
 .send_notify_dev: &send_notify_dev
