@@ -723,7 +723,7 @@ build_apk_and_verify:
   script:
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
-    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
+    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN,DEVELOPMENT_BUILD" --remove_define_symbol=""
 
     # Resolve packages to generate Library/PackageCache
     - echo "Resolving Unity packages to generate Library/PackageCache..."
@@ -932,7 +932,7 @@ build_apk_and_verify_manual:
   script:
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
-    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
+    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN,DEVELOPMENT_BUILD" --remove_define_symbol=""
 
     # Resolve packages to generate Library/PackageCache
     - echo "Resolving Unity packages to generate Library/PackageCache..."
