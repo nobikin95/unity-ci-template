@@ -643,6 +643,79 @@ variables:
       fi
     }
 
+# Helper function to extract BuildOptions from git tag message only
+.extract_tag_buildoptions: &extract_tag_buildoptions
+  - |
+    # Function to extract BuildOptions from git tag message
+    extract_tag_buildoptions() {
+      # If no tag exists, return None
+      if [ -z "$CI_COMMIT_TAG" ]; then
+        echo "None"
+        return 0
+      fi
+
+      # Get tag message, return None if git command fails or tag message is empty
+      local tag_message=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG" 2>/dev/null || echo "")
+      if [ -z "$tag_message" ]; then
+        echo "None"
+        return 0
+      fi
+
+      # Extract BuildOptions using sed (most reliable method)
+      local extracted_options=$(echo "$tag_message" | sed -n 's/.*\[BuildOptions:\([^]]*\)\].*/\1/p')
+      if [ -n "$extracted_options" ]; then
+        echo "$extracted_options"
+        return 0
+      fi
+
+      # Try case-insensitive version
+      local case_insensitive=$(echo "$tag_message" | sed -n 's/.*\[buildoptions:\([^]]*\)\].*/\1/ip')
+      if [ -n "$case_insensitive" ]; then
+        echo "$case_insensitive"
+        return 0
+      fi
+
+      # No BuildOptions pattern found in tag message, return None
+      echo "None"
+      return 0
+    }
+
+    # Export the function for use in scripts
+    export -f extract_tag_buildoptions
+
+# Simplified BuildOptions determination - tag message only
+.get_tag_buildoptions: &get_tag_buildoptions
+  - |
+    # Simple function to get BuildOptions from tag message only
+    get_tag_buildoptions() {
+      local buildoptions=$(extract_tag_buildoptions)
+      echo "$buildoptions"
+    }
+
+    # Export the function for use in scripts
+    export -f get_tag_buildoptions
+
+.log_build_options: &log_build_options
+  - |
+    echo ""
+    echo "=== BUILD OPTIONS CONFIGURATION ==="
+    echo "Build type: ${BUILD_TYPE:-'Not set'}"
+
+    # Show tag and tag message
+    if [ -n "$CI_COMMIT_TAG" ]; then
+      TAG_MESSAGE=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG" 2>/dev/null || echo "No tag message")
+      echo "Tag: $CI_COMMIT_TAG"
+      echo "Tag message: '$TAG_MESSAGE'"
+    else
+      echo "Tag: No tag"
+      echo "Tag message: N/A"
+    fi
+
+    echo "Selected BuildOptions: ${SELECTED_BUILD_OPTIONS:-'Not selected'}"
+    echo "Branch/Tag: ${CI_COMMIT_REF_NAME:-'No branch'}"
+    echo "=================================="
+    echo ""
+
 .send_notify_dev: &send_notify_dev
   # Check for NOTIFY_DEV variable and send Slack message
   - if [ -z "$NOTIFY_DEV" ]; then
