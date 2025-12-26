@@ -274,80 +274,19 @@ build_ios_release:
     - *common_build_steps
 
     # Fetch changelog for iOS release tags
-    - echo "Fetching changelog for iOS release build..."
+    - echo "Fetching changelog..."
+    - chmod +x Assets/cicd/ci/fetch_changelog.sh
+    - bash Assets/cicd/ci/fetch_changelog.sh --target_branch="ios-release" --tag="$CI_COMMIT_TAG"
+    
+    # Read changelog from file
     - |
-      if [[ "$CI_COMMIT_TAG" =~ ^ios-release/bundle.*$ ]]; then
-        echo "Detected iOS release tag. Fetching changelog...";
-
-        # Determine target branch (ios-release)
-        TARGET_BRANCH="ios-release"
-        echo "Target branch: $TARGET_BRANCH"
-
-        # Fetch merge request info
-        MR_API_URL="https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/merge_requests?state=merged&target_branch=$TARGET_BRANCH&order_by=updated_at&sort=desc"
-        echo "Fetching merge request info from: $MR_API_URL"
-
-        MERGE_REQUEST_INFO=$(curl --silent --header "PRIVATE-TOKEN: $GITLAB_API_TOKEN" "$MR_API_URL" | jq '.[0]')
-
-        if [[ -n "$MERGE_REQUEST_INFO" && "$MERGE_REQUEST_INFO" != "null" ]]; then
-          echo "Found merge request. Extracting description..."
-          MR_DESCRIPTION=$(echo "$MERGE_REQUEST_INFO" | jq -r '.description')
-
-          if [[ -n "$MR_DESCRIPTION" && "$MR_DESCRIPTION" != "null" && "$MR_DESCRIPTION" =~ "## Change Log" ]]; then
-            echo "Found Change Log section in merge request description."
-            # Extract changelog between "## Change Log" and next section (starting with ##)
-            # Using awk for better compatibility with both GNU sed (Linux) and BSD sed (macOS)
-            CHANGELOG=$(echo "$MR_DESCRIPTION" | awk '/## Change Log/,/^## [^C]/ {if (/^## [^C]/) exit; print}')
-
-            # Get merger info
-            MERGER_NAME=$(echo "$MERGE_REQUEST_INFO" | jq -r '.merged_by.name')
-            MERGER_USERNAME=$(echo "$MERGE_REQUEST_INFO" | jq -r '.merged_by.username')
-
-            export CHANGELOG="$CHANGELOG"
-            echo "$CHANGELOG" > changelog.tmp
-            echo -e "\nMerged by: $MERGER_NAME (@$MERGER_USERNAME)" >> changelog.tmp
-            export CHANGELOG=$(cat changelog.tmp)
-
-            echo "Changelog extracted from merge request:"
-            echo "================================"
-            echo "$CHANGELOG"
-            echo "================================"
-          else
-            echo "No valid Change Log found in merge request. Extracting from tag..."
-            export CHANGELOG=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG")
-
-            if [ -z "$CHANGELOG" ]; then
-              echo "No changelog found in tag. Using commit message..."
-              export CHANGELOG=$(git log -1 --pretty=%B)
-            fi
-
-            echo "Changelog extracted:"
-            echo "================================"
-            echo "$CHANGELOG"
-            echo "================================"
-          fi
-        else
-          echo "No merge request found. Extracting changelog from tag..."
-          export CHANGELOG=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG")
-
-          if [ -z "$CHANGELOG" ]; then
-            echo "No changelog found in tag. Using commit message..."
-            export CHANGELOG=$(git log -1 --pretty=%B)
-          fi
-
-          echo "Changelog extracted:"
-          echo "================================"
-          echo "$CHANGELOG"
-          echo "================================"
-        fi
+      if [ -f "changelog.txt" ]; then
+        export CHANGELOG=$(cat changelog.txt)
       else
-        echo "Not an iOS release tag. Using default changelog."
-        export CHANGELOG="iOS build"
+        export CHANGELOG="No changelog available"
       fi
-
-    - echo "Printing CHANGELOG value:"
+    - echo "Final Changelog:"
     - echo "$CHANGELOG"
-    - echo "$CHANGELOG" > changelog.txt
 
     - echo "Loading Slack message template..."
     - export MESSAGE_TEMPLATES_FILE="$CI_PROJECT_DIR/Assets/cicd/ci/message_templates.json"
