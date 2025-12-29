@@ -547,7 +547,6 @@ build_ios_release:
     
     # 3. Clean log files
     - echo "  → Cleaning log files..."
-    - rm -f *.log || true
     - rm -f changelog.* || true
     - echo "  ✅ Log files cleaned"
     
@@ -808,7 +807,6 @@ build_ios_ipa:
     
     # 3. Clean log files
     - echo "  → Cleaning log files..."
-    - rm -f *.log || true
     - rm -f changelog.* || true
     - echo "  ✅ Log files cleaned"
     
@@ -816,7 +814,13 @@ build_ios_ipa:
     - echo "📊 Remaining disk space:"
     - df -h | grep -E 'Filesystem|disk' || df -h
 
-
+  artifacts:
+    paths:
+      - build_output.log
+      - archive_dev.log
+      - export_dev.log
+    when: always
+    expire_in: 1 days
 
 build_xcode_project:
   stage: build_self_test
