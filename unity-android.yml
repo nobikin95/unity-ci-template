@@ -1725,12 +1725,32 @@ upload_internal:
         echo "📤 Uploading AAB and symbols files to Slack as fallback..."
 
         # Prepare failure message
-        FAILURE_MESSAGE="🚨 *Fastlane Upload Failed*\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}Project: *${PROJECT_NAME}*\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}Platform: *Android*\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}Build: *${AAB_NAME}*\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}Exit Code: ${FASTLANE_EXIT_CODE}\n\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}📦 Files are being uploaded to this channel for manual deployment."
+        # Prepare failure message from template
+        export MESSAGE_TEMPLATES_FILE="Assets/cicd/ci/message_templates.json"
+        template_key="fastlane_upload_fail"
+        message=$(jq -r --arg key "$template_key" '.[$key]' "$MESSAGE_TEMPLATES_FILE")
+
+        if [ -z "$message" ] || [ "$message" == "null" ]; then
+          echo "[ERROR] Message template not found for key: $template_key"
+          # Fallback message
+          FAILURE_MESSAGE="🚨 *Fastlane Upload Failed*\nProject: *${PROJECT_NAME}*\nPlatform: *Android*\nBuild: *${AAB_NAME}*\nExit Code: ${FASTLANE_EXIT_CODE}\n\n📦 Files are being uploaded to this channel for manual deployment."
+        else
+          # Extract error reason from log
+          ERROR_REASON=$(grep "Google Api Error" fastlane_upload.log | head -n 1 | sed 's/Google Api Error: //g')
+          if [ -z "$ERROR_REASON" ]; then
+             ERROR_REASON=$(grep "Invalid request" fastlane_upload.log | head -n 1)
+          fi
+          if [ -z "$ERROR_REASON" ]; then
+             ERROR_REASON="Unknown error. Please check the logs."
+          fi
+
+          FAILURE_MESSAGE=$(echo "$message" | sed \
+            -e "s/{project_name}/${PROJECT_NAME}/g" \
+            -e "s/{platform}/Android/g" \
+            -e "s/{build_name}/${AAB_NAME}/g" \
+            -e "s/{exit_code}/${FASTLANE_EXIT_CODE}/g" \
+            -e "s/{error_reason}/${ERROR_REASON}/g")
+        fi
 
         # Upload AAB file to Slack
         if [ -f "$AAB_PATH" ]; then
