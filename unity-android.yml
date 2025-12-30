@@ -1706,6 +1706,62 @@ upload_internal:
     - echo "AAB_PATH $AAB_PATH"
     - echo "SYMBOLS_PATH $SYMBOLS_PATH"
     
+    # Firebase Crashlytics Symbol Upload
+    - |
+      if [ -n "$FIREBASE_CRASHLYTIC_TOKEN" ]; then
+        echo "----------------------------------------------------------------";
+        echo "🔥 FIREBASE_CRASHLYTIC_TOKEN found. Starting symbol upload process...";
+        
+        if [ -n "$SYMBOLS_PATH" ] && [ -f "$SYMBOLS_PATH" ]; then
+          echo "📦 Symbols file found: $SYMBOLS_PATH";
+          FILE_SIZE=$(ls -lh "$SYMBOLS_PATH" | awk '{print $5}');
+          echo "📊 Symbols file size: $FILE_SIZE";
+          
+          # Check for google-services.json
+          GOOGLE_SERVICES_JSON="Assets/google-services.json"
+          if [ ! -f "$GOOGLE_SERVICES_JSON" ]; then
+             echo "❌ Error: $GOOGLE_SERVICES_JSON not found. Cannot determine App ID.";
+          else
+             # Ensure jq is available (used previously in script so likely yes)
+             # Extract App ID based on package name
+             # Note: GOOGLE_PLAY_PACKAGE_NAME is already exported in previous steps
+             echo "🔍 Extracting App ID for package: $GOOGLE_PLAY_PACKAGE_NAME";
+             APP_ID=$(jq -r --arg pkg "$GOOGLE_PLAY_PACKAGE_NAME" '.client[] | select(.client_info.android_client_info.package_name == $pkg) | .client_info.mobilesdk_app_id' "$GOOGLE_SERVICES_JSON");
+             
+             if [ -z "$APP_ID" ] || [ "$APP_ID" == "null" ]; then
+               echo "❌ Error: Could not find mobilesdk_app_id for $GOOGLE_PLAY_PACKAGE_NAME in $GOOGLE_SERVICES_JSON";
+             else
+               echo "🆔 Found App ID: $APP_ID";
+               
+               # Check/Install Firebase CLI
+               if ! command -v firebase &> /dev/null; then
+                 echo "🛠️ Firebase CLI not found. Installing...";
+                 # Install standalone binary to avoid nodejs dependency issues if possible, or straight npm if node is there
+                 # The curl script installs the standalone binary which is safer
+                 curl -sL https://firebase.tools | bash;
+               fi
+               
+               # Upload
+               echo "🚀 Uploading symbols to Firebase Crashlytics...";
+               export FIREBASE_TOKEN="$FIREBASE_CRASHLYTIC_TOKEN";
+               
+               # Use '|| true' to prevent pipeline failure if upload fails (optional, but safer for deployment job)
+               if firebase crashlytics:symbols:upload --app "$APP_ID" "$SYMBOLS_PATH"; then
+                  echo "✅ Symbol upload successful!";
+               else
+                  echo "❌ Symbol upload failed!";
+                  # We verify success but do not exit 1 to not block the main deployment functionality if this is secondary
+               fi
+             fi
+          fi
+        else
+          echo "⚠️ No symbols file found at expected path. Skipping upload.";
+        fi
+        echo "----------------------------------------------------------------";
+      else
+        echo "ℹ️ FIREBASE_CRASHLYTIC_TOKEN not set. Skipping Firebase symbol upload.";
+      fi
+    
     - echo "Preparing fastlane configuration..."
     - mkdir -p fastlane
     - cp Assets/cicd/ci/deploy/Fastfile_android fastlane/Fastfile
