@@ -996,6 +996,11 @@ build_apk_and_verify:
     - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
   after_script:
     - Assets/cicd/ci/release-resource.sh "global_verify_apk"
+  artifacts:
+    paths:
+      - log.txt
+    when: always
+    expire_in: 1 day
 
 
 build_apk_and_verify_manual:
@@ -1205,6 +1210,11 @@ build_apk_and_verify_manual:
     - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
   after_script:
     - Assets/cicd/ci/release-resource.sh "global_verify_apk"
+  artifacts:
+    paths:
+      - log.txt
+    when: always
+    expire_in: 1 day
 
 
 build_aab:
