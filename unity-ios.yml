@@ -600,7 +600,7 @@ build_ios_ipa:
   timeout: 60m
   rules:
     - if: '$CI_COMMIT_TAG =~ /^ios-develop\/ver_/'
-      when: manual
+      when: on_success
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME == "ios-develop"'
       when: manual
   script:
