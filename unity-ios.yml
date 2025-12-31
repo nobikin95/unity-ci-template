@@ -1,8 +1,6 @@
 variables:
   IOS_DEVELOPMENT_TEAM: "RN7J7SQGUH"
-  # Use Xcode default location for maximum build speed and cache reuse
-  # Xcode manages its own cache efficiently across all projects
-  XCODE_DERIVED_DATA_PATH: "~/Library/Developer/Xcode/DerivedData"
+  XCODE_DERIVED_DATA_PATH: "$CI_PROJECT_DIR/DerivedData"
 
 .common_before_script: &common_before_script
   - git clean -fdx
@@ -216,6 +214,22 @@ variables:
   - export NEW_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
   - echo "Next IOS_VERSION will be $NEW_VERSION"
   - 'curl --fail -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/IOS_VERSION"'
+
+.handle_xcode_error_script_content: &handle_xcode_error_script_content
+  error_message="$1" 
+  log_file="$2" 
+  echo "-----------------------------------------------------"
+  echo "[ERROR] $error_message"
+  if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+    echo "Last 50 lines of $log_file:"
+    tail -n 50 "$log_file"
+  fi
+  echo "-----------------------------------------------------"
+  python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+  if [ -n "$NOTIFY_DEV" ]; then
+    python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+  fi
+  exit 1
 
 build_ios_release:
   stage: build_ios
@@ -515,42 +529,29 @@ build_ios_release:
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
 
     # ========================================
-    # 🧹 SMART STORAGE CLEANUP (After backup)
+    # 🧹 STORAGE CLEANUP (After backup)
     # ========================================
     - echo ""
-    - echo "🧹 Starting smart storage cleanup..."
+    - echo "🧹 Starting storage cleanup to free disk space..."
     
-    # Check available disk space
-    - |
-      echo "📊 Checking disk space..."
-      AVAILABLE_GB=$(df -g . | tail -1 | awk '{print $4}')
-      echo "Available disk space: ${AVAILABLE_GB}GB"
-      
-      if [ "$AVAILABLE_GB" -lt 100 ]; then
-        echo "⚠️  Low disk space detected! Performing full cleanup..."
-        
-        # Clean DerivedData when space is low
-        echo "  → Cleaning DerivedData..."
-        rm -rf "$XCODE_DERIVED_DATA_PATH" || true
-        echo "  ✅ DerivedData cleaned"
-      else
-        echo "✅ Sufficient disk space (${AVAILABLE_GB}GB available)"
-        echo "  → Skipping DerivedData cleanup for faster incremental builds"
-      fi
+    # 1. Clean DerivedData (CRITICAL - 5-15GB)
+    - echo "  → Cleaning DerivedData..."
+    - rm -rf "$XCODE_DERIVED_DATA_PATH" || true
+    - echo "  ✅ DerivedData cleaned"
     
-    # Always clean build artifacts (one-time use, can't be reused)
-    - echo "  → Cleaning build artifacts..."
+    # 2. Clean build artifacts (IMPORTANT - 10-15GB)
+    - echo "  → Cleaning archives and exported IPAs..."
     - rm -rf Build/iOS/*.xcarchive || true
     - rm -rf Build/iOS/ExportedIPA_Release || true
     - echo "  ✅ Build artifacts cleaned"
     
-    # Always clean log files
+    # 3. Clean log files
     - echo "  → Cleaning log files..."
     - rm -f changelog.* || true
     - echo "  ✅ Log files cleaned"
     
-    - echo "✅ Smart cleanup completed!"
-    - echo "📊 Final disk space:"
+    - echo "✅ Storage cleanup completed!"
+    - echo "📊 Remaining disk space:"
     - df -h | grep -E 'Filesystem|disk' || df -h
 
   artifacts:
@@ -788,42 +789,29 @@ build_ios_ipa:
     - "$CI_PROJECT_DIR/Assets/cicd/ci/backup_ios_build.sh"
 
     # ========================================
-    # 🧹 SMART STORAGE CLEANUP (After backup)
+    # 🧹 STORAGE CLEANUP (After backup)
     # ========================================
     - echo ""
-    - echo "🧹 Starting smart storage cleanup..."
+    - echo "🧹 Starting storage cleanup to free disk space..."
     
-    # Check available disk space
-    - |
-      echo "📊 Checking disk space..."
-      AVAILABLE_GB=$(df -g . | tail -1 | awk '{print $4}')
-      echo "Available disk space: ${AVAILABLE_GB}GB"
-      
-      if [ "$AVAILABLE_GB" -lt 50 ]; then
-        echo "⚠️  Low disk space detected! Performing full cleanup..."
-        
-        # Clean DerivedData when space is low
-        echo "  → Cleaning DerivedData..."
-        rm -rf "$XCODE_DERIVED_DATA_PATH" || true
-        echo "  ✅ DerivedData cleaned"
-      else
-        echo "✅ Sufficient disk space (${AVAILABLE_GB}GB available)"
-        echo "  → Skipping DerivedData cleanup for faster incremental builds"
-      fi
+    # 1. Clean DerivedData (CRITICAL - 5-15GB)
+    - echo "  → Cleaning DerivedData..."
+    - rm -rf "$XCODE_DERIVED_DATA_PATH" || true
+    - echo "  ✅ DerivedData cleaned"
     
-    # Always clean build artifacts (one-time use, can't be reused)
-    - echo "  → Cleaning build artifacts..."
+    # 2. Clean build artifacts (IMPORTANT - 10-15GB)
+    - echo "  → Cleaning archives and exported IPAs..."
     - rm -rf Build/iOS/*.xcarchive || true
     - rm -rf Build/iOS/ExportedIPA_Dev || true
     - echo "  ✅ Build artifacts cleaned"
     
-    # Always clean log files
+    # 3. Clean log files
     - echo "  → Cleaning log files..."
     - rm -f changelog.* || true
     - echo "  ✅ Log files cleaned"
     
-    - echo "✅ Smart cleanup completed!"
-    - echo "📊 Final disk space:"
+    - echo "✅ Storage cleanup completed!"
+    - echo "📊 Remaining disk space:"
     - df -h | grep -E 'Filesystem|disk' || df -h
 
   artifacts:
