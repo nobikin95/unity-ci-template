@@ -58,6 +58,22 @@ variables:
     fi
   - export UNITY_PATH="${BASE_PATH}/Unity/Hub/Editor/${UNITY_VERSION}/Editor/Unity"
 
+  # Install xvfb for projects that need video rendering (e.g., VideoPlayer with RenderTexture)
+  # xvfb-run will be used as a wrapper around Unity build command
+  # This is opt-in via ENABLE_XVFB_FOR_VIDEO environment variable
+  - |
+    if [ "$ENABLE_XVFB_FOR_VIDEO" = "true" ]; then
+      echo "Checking xvfb installation for video rendering support...";
+      if ! command -v xvfb-run &> /dev/null; then
+        echo "Installing xvfb...";
+        sudo apt-get update -qq;
+        sudo apt-get install -y xvfb;
+        echo "✓ xvfb installed successfully";
+      else
+        echo "✓ xvfb already installed";
+      fi
+    fi
+
   - if [ -z "$SLACK_BOT_TOKEN" ]; then echo "SLACK_BOT_TOKEN is not set"; else echo $SLACK_BOT_TOKEN; fi
   - if [ -z "$SLACK_CHANNEL_ID" ]; then echo "SLACK_CHANNEL_ID is not set"; else echo $SLACK_CHANNEL_ID; fi
   - if [ -z "$GITLAB_API_TOKEN" ]; then echo "GITLAB_API_TOKEN is not set"; else echo $GITLAB_API_TOKEN; fi
@@ -89,6 +105,29 @@ variables:
   - export MINOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f2)
   - export PATCH_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f3)
   - echo $CURRENT_VERSION
+  - |
+    # Normalize NOTIFY_DEV by removing spaces and ensure U043T5P1G9Z is included
+    if [ -n "$NOTIFY_DEV" ]; then
+      # Remove all spaces from NOTIFY_DEV
+      export NOTIFY_DEV=$(echo "$NOTIFY_DEV" | tr -d ' ')
+      echo "Normalized NOTIFY_DEV: $NOTIFY_DEV"
+      
+      # Check if U043T5P1G9Z is already in NOTIFY_DEV
+      if ! echo ",$NOTIFY_DEV," | grep -q ",U043T5P1G9Z,"; then
+        echo "Adding U043T5P1G9Z to NOTIFY_DEV"
+        if [ -z "$NOTIFY_DEV" ]; then
+          export NOTIFY_DEV="U043T5P1G9Z"
+        else
+          export NOTIFY_DEV="$NOTIFY_DEV,U043T5P1G9Z"
+        fi
+        echo "Updated NOTIFY_DEV: $NOTIFY_DEV"
+      else
+        echo "U043T5P1G9Z already exists in NOTIFY_DEV"
+      fi
+    else
+      echo "NOTIFY_DEV is not set, setting to U043T5P1G9Z"
+      export NOTIFY_DEV="U043T5P1G9Z"
+    fi
   # Update bundleVersion in ProjectSettings.asset
   - sed -i "s/\(bundleVersion:[[:space:]]*\).*/\1\"$CURRENT_VERSION\"/" ProjectSettings/ProjectSettings.asset
   - sed -i "s/\(m_ShowUnitySplashLogo:\).*/\1 0/" ProjectSettings/ProjectSettings.asset
@@ -182,6 +221,9 @@ variables:
       # Prepare detailed message based on error type
       local detailed_message=""
       case "$error_type" in
+        "VALIDATION")
+          detailed_message="⚠️ *Loại lỗi:* Build Validation Failed\n📋 *Nguyên nhân:* Unity PreprocessBuild validation check failed\n💡 *Khuyến nghị:*\n  • Kiểm tra Unity build log để xem validation error chi tiết\n  • Fix data/logic issue trong Assets/Editor validation scripts\n  • Validation errors KHÔNG thể fix bằng retry\n  • Check Slack notification (nếu có) để biết validator nào fail"
+          ;;
         "GRADLE")
           if grep -q "Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
             detailed_message="🔧 *Loại lỗi:* Gradle Daemon Stopped\n📋 *Nguyên nhân:* Gradle build daemon bị dừng đột ngột\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory exhaustion hoặc daemon crash\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần và restart daemon\n  • Nếu vẫn fail, kiểm tra memory usage và Gradle cache"
@@ -280,10 +322,24 @@ variables:
 
         # Run Unity build
         # Build command with optional build options
-        local build_cmd="$UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -nographics -silent-crashes -quit"
+        # Use xvfb-run wrapper when ENABLE_XVFB_FOR_VIDEO is enabled for video rendering support
+        if [ "$ENABLE_XVFB_FOR_VIDEO" = "true" ]; then
+          # Use xvfb-run wrapper and remove -nographics to enable graphics device
+          local build_cmd="xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -silent-crashes -quit"
+          echo "🖥️  Using xvfb-run for video rendering support";
+        else
+          # Standard headless build (backward compatible)
+          local build_cmd="$UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod \"$build_method\" -buildPath=\"$build_path\" -logFile \"$log_file\" -batchmode -nographics -silent-crashes -quit"
+          echo "Standard headless build (no graphics)";
+        fi
+        
         if [ -n "$build_options" ]; then
           build_cmd="$build_cmd $build_options"
         fi
+        
+        # Log the build command for debugging
+        echo "Executing Unity build command...";
+        echo "Command: ${build_cmd:0:150}..." # Show first 150 chars
         
         if eval "$build_cmd"; then
           echo "✓ Unity build succeeded on attempt $build_attempt";
@@ -315,6 +371,23 @@ variables:
         else
           local build_exit_code=$?
           echo "✗ Unity build failed on attempt $build_attempt with exit code $build_exit_code";
+
+          # Check for Unity Editor Crash (Exit code 134) or Aborted message
+          # Note: Exit code 134 usually indicates SIGABRT (Aborted core dumped)
+          if [ $build_exit_code -eq 134 ] || grep -q "Aborted.*core dumped" "$log_file"; then
+            echo "⚠ Detected Unity Editor Crash (Exit Code 134 / Aborted)";
+            
+            if [ $build_attempt -lt $max_total_attempts ]; then
+              echo "⟳ Retrying build immediately (attempt $((build_attempt + 1))/$max_total_attempts)...";
+              echo "Waiting 10 seconds before retry to allow system to stabilize...";
+              sleep 10;
+              continue
+            else
+              echo "✗ Max retries reached ($max_retry_attempts retry after initial build). Build failed due to repeated crashes.";
+              send_build_failure_notification "UNITY_CRASH"
+              return 1;
+            fi
+          fi
 
           # Check if this is a Gradle-related failure
           if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task.*:launcher:package\|Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
@@ -351,16 +424,27 @@ variables:
               return 1;
             fi
           else
-            echo "✗ Non-Gradle failure detected. Not retrying.";
-            echo "Checking error type...";
+            echo "✗ Non-Gradle failure detected. Checking error type...";
             local error_type=$(detect_error_type "$log_file")
             echo "Detected error type: $error_type";
+            
+            # Check if this is a validation error (BuildFailedException)
+            if grep -q "BuildFailedException" "$log_file"; then
+              echo "⚠️  Detected Build Validation Failure - validation errors cannot be fixed by retrying";
+              echo "Error details:";
+              grep -B 3 -A 3 "BuildFailedException" "$log_file" | head -n 20 || echo "Could not extract error details";
+              
+              # Validation failure - don't retry, fail immediately
+              echo "✗ Build validation failed. This is a logic/data error that requires code/asset fixes.";
+              send_build_failure_notification "VALIDATION_ERROR"
+              return 1;
+            fi
             
             # Show last 20 lines of log for debugging
             echo "Last 20 lines of build log:";
             tail -n 20 "$log_file";
             
-            # Non-Gradle failure (likely compilation error) - send notification immediately
+            # Non-Gradle, non-validation failure (likely compilation error) - send notification immediately
             if [ "$error_type" = "COMPILATION" ]; then
               send_build_failure_notification "COMPILATION_ERROR"
             else
@@ -486,7 +570,168 @@ variables:
       echo "  Successfully patched: $patched_count";
       echo "  Skipped (already patched or no target): $skipped_count";
       echo "========================================";
+
+      # Patch IKameAdjust.cs
+      echo "";
+      echo "========================================";
+      echo "Searching for IKameAdjust.cs files to patch...";
+      echo "========================================";
+
+      # Array to store all found IKameAdjust.cs files
+      IKAME_ADJUST_FILES=()
+
+      # 1. Search in Library/PackageCache (package manager location)
+      echo "Searching in Library/PackageCache...";
+      while IFS= read -r file; do
+        [ -n "$file" ] && IKAME_ADJUST_FILES+=("$file")
+      done < <(find Library/PackageCache -name "IKameAdjust.cs" -type f 2>/dev/null)
+
+      # 2. Search in Assets
+      echo "Searching in Assets...";
+      while IFS= read -r file; do
+        [ -n "$file" ] && IKAME_ADJUST_FILES+=("$file")
+      done < <(find Assets -name "IKameAdjust.cs" -type f 2>/dev/null)
+
+      # Check if any files found
+      if [ ${#IKAME_ADJUST_FILES[@]} -eq 0 ]; then
+        echo "⚠ WARNING: No IKameAdjust.cs files found. Skipping patch.";
+      else
+        echo "✓ Found ${#IKAME_ADJUST_FILES[@]} IKameAdjust.cs file(s):";
+        for file in "${IKAME_ADJUST_FILES[@]}"; do
+          echo "  - $file";
+        done
+        echo "";
+
+        # Patch each file
+        local ikame_patched_count=0
+        local ikame_skipped_count=0
+
+        for IKAME_ADJUST_CS in "${IKAME_ADJUST_FILES[@]}"; do
+          echo "Processing: $IKAME_ADJUST_CS";
+
+          # Check if already patched
+          if grep -q "#if VERIFY_TOKEN" "$IKAME_ADJUST_CS"; then
+            echo "  ⊘ VERIFY_TOKEN block already present. Skipping.";
+            ikame_skipped_count=$((ikame_skipped_count + 1))
+            continue
+          fi
+
+          # Check if target line exists
+          if ! grep -q "if (!this\.startManually)" "$IKAME_ADJUST_CS"; then
+            echo "  ⚠ Target line 'if (!this.startManually)' not found. Skipping.";
+            ikame_skipped_count=$((ikame_skipped_count + 1))
+            continue
+          fi
+
+          # Apply patch
+          awk '
+          BEGIN { inserted=0 }
+          {
+            if (!inserted && $0 ~ /if \(!this\.startManually\)/) {
+              match($0, /^[[:space:]]*]/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "this.environment = AdjustEnvironment.Sandbox;";
+              print indent "this.logLevel = AdjustLogLevel.Verbose;";
+              print "#else";
+              print indent "this.environment = AdjustEnvironment.Production;";
+              print indent "this.logLevel = AdjustLogLevel.Error;";
+              print "#endif";
+              inserted=1;
+            }
+            print $0;
+          }' "$IKAME_ADJUST_CS" > "$IKAME_ADJUST_CS.tmp" && mv "$IKAME_ADJUST_CS.tmp" "$IKAME_ADJUST_CS"
+
+          if [ $? -eq 0 ]; then
+            echo "  ✓ Successfully patched!";
+            ikame_patched_count=$((ikame_patched_count + 1))
+          else
+            echo "  ✗ Failed to patch!";
+          fi
+        done
+
+        echo "";
+        echo "========================================";
+        echo "IKameAdjust.cs Patch Summary:";
+        echo "  Total files found: ${#IKAME_ADJUST_FILES[@]}";
+        echo "  Successfully patched: $ikame_patched_count";
+        echo "  Skipped (already patched or no target): $ikame_skipped_count";
+        echo "========================================";
+      fi
     }
+
+# Helper function to extract BuildOptions from git tag message only
+.extract_tag_buildoptions: &extract_tag_buildoptions
+  - |
+    # Function to extract BuildOptions from git tag message
+    extract_tag_buildoptions() {
+      # If no tag exists, return None
+      if [ -z "$CI_COMMIT_TAG" ]; then
+        echo "None"
+        return 0
+      fi
+
+      # Get tag message, return None if git command fails or tag message is empty
+      local tag_message=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG" 2>/dev/null || echo "")
+      if [ -z "$tag_message" ]; then
+        echo "None"
+        return 0
+      fi
+
+      # Extract BuildOptions using sed (most reliable method)
+      local extracted_options=$(echo "$tag_message" | sed -n 's/.*\[BuildOptions:\([^]]*\)\].*/\1/p')
+      if [ -n "$extracted_options" ]; then
+        echo "$extracted_options"
+        return 0
+      fi
+
+      # Try case-insensitive version
+      local case_insensitive=$(echo "$tag_message" | sed -n 's/.*\[buildoptions:\([^]]*\)\].*/\1/ip')
+      if [ -n "$case_insensitive" ]; then
+        echo "$case_insensitive"
+        return 0
+      fi
+
+      # No BuildOptions pattern found in tag message, return None
+      echo "None"
+      return 0
+    }
+
+    # Export the function for use in scripts
+    export -f extract_tag_buildoptions
+
+# Simplified BuildOptions determination - tag message only
+.get_tag_buildoptions: &get_tag_buildoptions
+  - |
+    # Simple function to get BuildOptions from tag message only
+    get_tag_buildoptions() {
+      local buildoptions=$(extract_tag_buildoptions)
+      echo "$buildoptions"
+    }
+
+    # Export the function for use in scripts
+    export -f get_tag_buildoptions
+
+.log_build_options: &log_build_options
+  - |
+    echo ""
+    echo "=== BUILD OPTIONS CONFIGURATION ==="
+    echo "Build type: ${BUILD_TYPE:-'Not set'}"
+
+    # Show tag and tag message
+    if [ -n "$CI_COMMIT_TAG" ]; then
+      TAG_MESSAGE=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG" 2>/dev/null || echo "No tag message")
+      echo "Tag: $CI_COMMIT_TAG"
+      echo "Tag message: '$TAG_MESSAGE'"
+    else
+      echo "Tag: No tag"
+      echo "Tag message: N/A"
+    fi
+
+    echo "Selected BuildOptions: ${SELECTED_BUILD_OPTIONS:-'Not selected'}"
+    echo "Branch/Tag: ${CI_COMMIT_REF_NAME:-'No branch'}"
+    echo "=================================="
+    echo ""
 
 .send_notify_dev: &send_notify_dev
   # Check for NOTIFY_DEV variable and send Slack message
@@ -568,7 +813,7 @@ build_apk_and_verify:
   script:
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
-    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
+    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN,DEVELOPMENT_BUILD" --remove_define_symbol=""
 
     # Resolve packages to generate Library/PackageCache
     - echo "Resolving Unity packages to generate Library/PackageCache..."
@@ -777,7 +1022,7 @@ build_apk_and_verify_manual:
   script:
     # Update Scripting Symbol
     - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
-    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
+    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN,DEVELOPMENT_BUILD" --remove_define_symbol=""
 
     # Resolve packages to generate Library/PackageCache
     - echo "Resolving Unity packages to generate Library/PackageCache..."
@@ -1461,6 +1706,62 @@ upload_internal:
     - echo "AAB_PATH $AAB_PATH"
     - echo "SYMBOLS_PATH $SYMBOLS_PATH"
     
+    # Firebase Crashlytics Symbol Upload
+    - |
+      if [ -n "$FIREBASE_CRASHLYTIC_TOKEN" ]; then
+        echo "----------------------------------------------------------------";
+        echo "🔥 FIREBASE_CRASHLYTIC_TOKEN found. Starting symbol upload process...";
+        
+        if [ -n "$SYMBOLS_PATH" ] && [ -f "$SYMBOLS_PATH" ]; then
+          echo "📦 Symbols file found: $SYMBOLS_PATH";
+          FILE_SIZE=$(ls -lh "$SYMBOLS_PATH" | awk '{print $5}');
+          echo "📊 Symbols file size: $FILE_SIZE";
+          
+          # Check for google-services.json
+          GOOGLE_SERVICES_JSON="Assets/google-services.json"
+          if [ ! -f "$GOOGLE_SERVICES_JSON" ]; then
+             echo "❌ Error: $GOOGLE_SERVICES_JSON not found. Cannot determine App ID.";
+          else
+             # Ensure jq is available (used previously in script so likely yes)
+             # Extract App ID based on package name
+             # Note: GOOGLE_PLAY_PACKAGE_NAME is already exported in previous steps
+             echo "🔍 Extracting App ID for package: $GOOGLE_PLAY_PACKAGE_NAME";
+             APP_ID=$(jq -r --arg pkg "$GOOGLE_PLAY_PACKAGE_NAME" '.client[] | select(.client_info.android_client_info.package_name == $pkg) | .client_info.mobilesdk_app_id' "$GOOGLE_SERVICES_JSON");
+             
+             if [ -z "$APP_ID" ] || [ "$APP_ID" == "null" ]; then
+               echo "❌ Error: Could not find mobilesdk_app_id for $GOOGLE_PLAY_PACKAGE_NAME in $GOOGLE_SERVICES_JSON";
+             else
+               echo "🆔 Found App ID: $APP_ID";
+               
+               # Check/Install Firebase CLI
+               if ! command -v firebase &> /dev/null; then
+                 echo "🛠️ Firebase CLI not found. Installing...";
+                 # Install standalone binary to avoid nodejs dependency issues if possible, or straight npm if node is there
+                 # The curl script installs the standalone binary which is safer
+                 curl -sL https://firebase.tools | bash;
+               fi
+               
+               # Upload
+               echo "🚀 Uploading symbols to Firebase Crashlytics...";
+               export FIREBASE_TOKEN="$FIREBASE_CRASHLYTIC_TOKEN";
+               
+               # Use '|| true' to prevent pipeline failure if upload fails (optional, but safer for deployment job)
+               if firebase crashlytics:symbols:upload --app "$APP_ID" "$SYMBOLS_PATH"; then
+                  echo "✅ Symbol upload successful!";
+               else
+                  echo "❌ Symbol upload failed!";
+                  # We verify success but do not exit 1 to not block the main deployment functionality if this is secondary
+               fi
+             fi
+          fi
+        else
+          echo "⚠️ No symbols file found at expected path. Skipping upload.";
+        fi
+        echo "----------------------------------------------------------------";
+      else
+        echo "ℹ️ FIREBASE_CRASHLYTIC_TOKEN not set. Skipping Firebase symbol upload.";
+      fi
+    
     - echo "Preparing fastlane configuration..."
     - mkdir -p fastlane
     - cp Assets/cicd/ci/deploy/Fastfile_android fastlane/Fastfile
@@ -1480,12 +1781,32 @@ upload_internal:
         echo "📤 Uploading AAB and symbols files to Slack as fallback..."
 
         # Prepare failure message
-        FAILURE_MESSAGE="🚨 *Fastlane Upload Failed*\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}Project: *${PROJECT_NAME}*\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}Platform: *Android*\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}Build: *${AAB_NAME}*\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}Exit Code: ${FASTLANE_EXIT_CODE}\n\n"
-        FAILURE_MESSAGE="${FAILURE_MESSAGE}📦 Files are being uploaded to this channel for manual deployment."
+        # Prepare failure message from template
+        export MESSAGE_TEMPLATES_FILE="Assets/cicd/ci/message_templates.json"
+        template_key="fastlane_upload_fail"
+        message=$(jq -r --arg key "$template_key" '.[$key]' "$MESSAGE_TEMPLATES_FILE")
+
+        if [ -z "$message" ] || [ "$message" == "null" ]; then
+          echo "[ERROR] Message template not found for key: $template_key"
+          # Fallback message
+          FAILURE_MESSAGE="🚨 *Fastlane Upload Failed*\nProject: *${PROJECT_NAME}*\nPlatform: *Android*\nBuild: *${AAB_NAME}*\nExit Code: ${FASTLANE_EXIT_CODE}\n\n📦 Files are being uploaded to this channel for manual deployment."
+        else
+          # Extract error reason from log
+          ERROR_REASON=$(grep "Google Api Error" fastlane_upload.log | head -n 1 | sed 's/Google Api Error: //g')
+          if [ -z "$ERROR_REASON" ]; then
+             ERROR_REASON=$(grep "Invalid request" fastlane_upload.log | head -n 1)
+          fi
+          if [ -z "$ERROR_REASON" ]; then
+             ERROR_REASON="Unknown error. Please check the logs."
+          fi
+
+          FAILURE_MESSAGE=$(echo "$message" | sed \
+            -e "s/{project_name}/${PROJECT_NAME}/g" \
+            -e "s/{platform}/Android/g" \
+            -e "s/{build_name}/${AAB_NAME}/g" \
+            -e "s/{exit_code}/${FASTLANE_EXIT_CODE}/g" \
+            -e "s/{error_reason}/${ERROR_REASON}/g")
+        fi
 
         # Upload AAB file to Slack
         if [ -f "$AAB_PATH" ]; then

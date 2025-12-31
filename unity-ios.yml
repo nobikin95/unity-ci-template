@@ -42,6 +42,29 @@ variables:
   - export MAJOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f1)
   - export MINOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f2)
   - export PATCH_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f3)
+  - |
+    # Normalize NOTIFY_DEV by removing spaces and ensure U043T5P1G9Z is included
+    if [ -n "$NOTIFY_DEV" ]; then
+      # Remove all spaces from NOTIFY_DEV
+      export NOTIFY_DEV=$(echo "$NOTIFY_DEV" | tr -d ' ')
+      echo "Normalized NOTIFY_DEV: $NOTIFY_DEV"
+      
+      # Check if U043T5P1G9Z is already in NOTIFY_DEV
+      if ! echo ",$NOTIFY_DEV," | grep -q ",U043T5P1G9Z,"; then
+        echo "Adding U043T5P1G9Z to NOTIFY_DEV"
+        if [ -z "$NOTIFY_DEV" ]; then
+          export NOTIFY_DEV="U043T5P1G9Z"
+        else
+          export NOTIFY_DEV="$NOTIFY_DEV,U043T5P1G9Z"
+        fi
+        echo "Updated NOTIFY_DEV: $NOTIFY_DEV"
+      else
+        echo "U043T5P1G9Z already exists in NOTIFY_DEV"
+      fi
+    else
+      echo "NOTIFY_DEV is not set, setting to U043T5P1G9Z"
+      export NOTIFY_DEV="U043T5P1G9Z"
+    fi
   - sed -i '' "s/\(bundleVersion:\).*/\1 \"$CURRENT_VERSION\"/" ProjectSettings/ProjectSettings.asset
   - sed -i '' "s/\(m_ShowUnitySplashLogo:\).*/\1 0/" ProjectSettings/ProjectSettings.asset
   - echo "Updated bundleVersion in ProjectSettings.asset to $CURRENT_VERSION"
@@ -75,6 +98,22 @@ variables:
         # Unity build
         echo "Running Unity build command with UNITY_PATH=$UNITY_PATH"
         $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget iOS -executeMethod BuildScript.BuildiOS -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit || {
+          echo "Unity build failed. Checking for validation errors...";
+          
+          # Check if this is a validation error (BuildFailedException)
+          if grep -q "BuildFailedException" "$CI_PROJECT_DIR/build_output.log"; then
+            echo "⚠️  Detected Build Validation Failure - validation errors cannot be fixed by retrying";
+            echo "Error details:";
+            grep -B 3 -A 3 "BuildFailedException" "$CI_PROJECT_DIR/build_output.log" | head -n 20 || echo "Could not extract error details";
+            echo "✗ Build validation failed. This is a logic/data error that requires code/asset fixes.";
+            
+            # Send notifications and exit without retry
+            python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+            python3 Assets/cicd/ci/send_slack_direct_message.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log";
+            exit 1;
+          fi
+          
+          # Non-validation error - show log and fail
           echo "Unity build failed. Output log:";
           tail -n 50 $CI_PROJECT_DIR/build_output.log;
           python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
@@ -241,80 +280,19 @@ build_ios_release:
     - *common_build_steps
 
     # Fetch changelog for iOS release tags
-    - echo "Fetching changelog for iOS release build..."
+    - echo "Fetching changelog..."
+    - chmod +x Assets/cicd/ci/fetch_changelog.sh
+    - bash Assets/cicd/ci/fetch_changelog.sh --target_branch="ios-release" --tag="$CI_COMMIT_TAG"
+    
+    # Read changelog from file
     - |
-      if [[ "$CI_COMMIT_TAG" =~ ^ios-release/bundle.*$ ]]; then
-        echo "Detected iOS release tag. Fetching changelog...";
-
-        # Determine target branch (ios-release)
-        TARGET_BRANCH="ios-release"
-        echo "Target branch: $TARGET_BRANCH"
-
-        # Fetch merge request info
-        MR_API_URL="https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/merge_requests?state=merged&target_branch=$TARGET_BRANCH&order_by=updated_at&sort=desc"
-        echo "Fetching merge request info from: $MR_API_URL"
-
-        MERGE_REQUEST_INFO=$(curl --silent --header "PRIVATE-TOKEN: $GITLAB_API_TOKEN" "$MR_API_URL" | jq '.[0]')
-
-        if [[ -n "$MERGE_REQUEST_INFO" && "$MERGE_REQUEST_INFO" != "null" ]]; then
-          echo "Found merge request. Extracting description..."
-          MR_DESCRIPTION=$(echo "$MERGE_REQUEST_INFO" | jq -r '.description')
-
-          if [[ -n "$MR_DESCRIPTION" && "$MR_DESCRIPTION" != "null" && "$MR_DESCRIPTION" =~ "## Change Log" ]]; then
-            echo "Found Change Log section in merge request description."
-            # Extract changelog between "## Change Log" and next section (starting with ##)
-            # Using awk for better compatibility with both GNU sed (Linux) and BSD sed (macOS)
-            CHANGELOG=$(echo "$MR_DESCRIPTION" | awk '/## Change Log/,/^## [^C]/ {if (/^## [^C]/) exit; print}')
-
-            # Get merger info
-            MERGER_NAME=$(echo "$MERGE_REQUEST_INFO" | jq -r '.merged_by.name')
-            MERGER_USERNAME=$(echo "$MERGE_REQUEST_INFO" | jq -r '.merged_by.username')
-
-            export CHANGELOG="$CHANGELOG"
-            echo "$CHANGELOG" > changelog.tmp
-            echo -e "\nMerged by: $MERGER_NAME (@$MERGER_USERNAME)" >> changelog.tmp
-            export CHANGELOG=$(cat changelog.tmp)
-
-            echo "Changelog extracted from merge request:"
-            echo "================================"
-            echo "$CHANGELOG"
-            echo "================================"
-          else
-            echo "No valid Change Log found in merge request. Extracting from tag..."
-            export CHANGELOG=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG")
-
-            if [ -z "$CHANGELOG" ]; then
-              echo "No changelog found in tag. Using commit message..."
-              export CHANGELOG=$(git log -1 --pretty=%B)
-            fi
-
-            echo "Changelog extracted:"
-            echo "================================"
-            echo "$CHANGELOG"
-            echo "================================"
-          fi
-        else
-          echo "No merge request found. Extracting changelog from tag..."
-          export CHANGELOG=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG")
-
-          if [ -z "$CHANGELOG" ]; then
-            echo "No changelog found in tag. Using commit message..."
-            export CHANGELOG=$(git log -1 --pretty=%B)
-          fi
-
-          echo "Changelog extracted:"
-          echo "================================"
-          echo "$CHANGELOG"
-          echo "================================"
-        fi
+      if [ -f "changelog.txt" ]; then
+        export CHANGELOG=$(cat changelog.txt)
       else
-        echo "Not an iOS release tag. Using default changelog."
-        export CHANGELOG="iOS build"
+        export CHANGELOG="No changelog available"
       fi
-
-    - echo "Printing CHANGELOG value:"
+    - echo "Final Changelog:"
     - echo "$CHANGELOG"
-    - echo "$CHANGELOG" > changelog.txt
 
     - echo "Loading Slack message template..."
     - export MESSAGE_TEMPLATES_FILE="$CI_PROJECT_DIR/Assets/cicd/ci/message_templates.json"
@@ -381,7 +359,6 @@ build_ios_release:
           handle_xcode_error "Nested frameworks fix failed" "$ARCHIVE_LOG_PATH"
         }
         echo "✅ Nested frameworks fixed"
-
         echo "Exporting archive with automatic signing..."
         if [ ! -f "$CI_PROJECT_DIR/Assets/cicd/exportOptionsPlist.plist" ]; then
            handle_xcode_error "exportOptionsPlist.plist not found at $CI_PROJECT_DIR/Assets/cicd/"
@@ -409,7 +386,6 @@ build_ios_release:
           -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
           > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
         echo "✅ Archive completed successfully"
-
         # Fix nested frameworks in archive
         echo "🔧 Fixing nested frameworks in archive..."
         chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh"
@@ -593,7 +569,6 @@ build_ios_release:
     
     # 3. Clean log files
     - echo "  → Cleaning log files..."
-    - rm -f *.log || true
     - rm -f changelog.* || true
     - echo "  ✅ Log files cleaned"
     
@@ -647,7 +622,7 @@ build_ios_ipa:
   timeout: 60m
   rules:
     - if: '$CI_COMMIT_TAG =~ /^ios-develop\/ver_/'
-      when: manual
+      when: on_success
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME == "ios-develop"'
       when: manual
   script:
@@ -696,7 +671,6 @@ build_ios_ipa:
           -quiet archive -derivedDataPath "$XCODE_DERIVED_DATA_PATH" \
           > "$ARCHIVE_LOG_PATH" 2>&1 || handle_xcode_error "Xcode archive step failed." "$ARCHIVE_LOG_PATH"
         echo "✅ Archive completed successfully"
-
         # Fix nested frameworks in archive
         echo "🔧 Fixing nested frameworks in archive..."
         chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_nested_frameworks_archive.sh"
@@ -871,7 +845,6 @@ build_ios_ipa:
     
     # 3. Clean log files
     - echo "  → Cleaning log files..."
-    - rm -f *.log || true
     - rm -f changelog.* || true
     - echo "  ✅ Log files cleaned"
     
@@ -879,7 +852,13 @@ build_ios_ipa:
     - echo "📊 Remaining disk space:"
     - df -h | grep -E 'Filesystem|disk' || df -h
 
-
+  artifacts:
+    paths:
+      - build_output.log
+      - archive_dev.log
+      - export_dev.log
+    when: always
+    expire_in: 1 days
 
 build_xcode_project:
   stage: build_self_test
