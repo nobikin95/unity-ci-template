@@ -77,7 +77,7 @@ variables:
   - |
     # Function to perform Unity build with framework verification retry
     perform_unity_build_with_retry() {
-      local max_retries=10
+      local max_retries=5
       local retry_count=0
       
       while [ $retry_count -lt $max_retries ]; do
