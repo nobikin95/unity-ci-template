@@ -714,6 +714,7 @@ variables:
 
 # Shared logic to setup build options from tag
 .setup_build_options_from_tag: &setup_build_options_from_tag
+  - *extract_tag_buildoptions
   - |
     echo "Checking for BuildOptions in tag message..."
     TAG_OPTIONS=$(extract_tag_buildoptions)
