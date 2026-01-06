@@ -712,6 +712,19 @@ variables:
     # Export the function for use in scripts
     export -f get_tag_buildoptions
 
+# Shared logic to setup build options from tag
+.setup_build_options_from_tag: &setup_build_options_from_tag
+  - |
+    echo "Checking for BuildOptions in tag message..."
+    TAG_OPTIONS=$(extract_tag_buildoptions)
+    BUILD_OPT_ARG=""
+    if [ "$TAG_OPTIONS" != "None" ]; then
+      echo "Found BuildOptions: $TAG_OPTIONS";
+      BUILD_OPT_ARG="-buildOption=\"$TAG_OPTIONS\"";
+    else
+      echo "No BuildOptions found in tag.";
+    fi
+
 .log_build_options: &log_build_options
   - |
     echo ""
@@ -1416,7 +1429,8 @@ build_apk_by_tag:
 
     # Unity build with automatic retry on Gradle failures
     # Using centralized helper function for consistent retry logic
-    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+    - *setup_build_options_from_tag
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" "$BUILD_OPT_ARG" || {
         echo "Error... Unity build failed after retries.";
         exit 1;
       }
@@ -1508,6 +1522,7 @@ build_self_test:
     - export BUILD_TYPE="📱APK_SelfTest"
     - export VERSION_INFO="${APK_VERSION}"
     - *common_before_script
+    - *extract_tag_buildoptions
   timeout: 30m
   rules:
     - if: '$CI_COMMIT_TAG =~ /^self_test(_[A-Z0-9]+)?$/'
@@ -1542,8 +1557,11 @@ build_self_test:
     - export NOTIFY_DEV=${MAIN_DEV}
     - *send_notify_dev
 
+    # Check for BuildOptions in tag message
+    - *setup_build_options_from_tag
+
     # Unity build with automatic retry on Gradle failures
-    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" "$BUILD_OPT_ARG" || {
         echo "Error... Unity build failed after retries.";
         exit 1;
       }
