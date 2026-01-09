@@ -477,31 +477,11 @@ variables:
       # Array to store all found Adjust.cs files
       ADJUST_FILES=()
 
-      # 1. Search in Library/PackageCache (package manager location)
-      echo "Searching in Library/PackageCache...";
+      # Search in entire current directory (excluding .git)
+      echo "Searching in entire current directory for Adjust.cs...";
       while IFS= read -r file; do
         [ -n "$file" ] && ADJUST_FILES+=("$file")
-      done < <(find Library/PackageCache -path "*/com.adjust.sdk@*/Scripts/Adjust.cs" 2>/dev/null)
-
-      # 2. Search in Assets/Adjust/Scripts (legacy location)
-      echo "Searching in Assets/Adjust/Scripts...";
-      if [ -f "Assets/Adjust/Scripts/Adjust.cs" ]; then
-        ADJUST_FILES+=("Assets/Adjust/Scripts/Adjust.cs")
-      fi
-
-      # 3. Search in any other location in Assets
-      echo "Searching in other Assets locations...";
-      while IFS= read -r file; do
-        # Skip if already in array
-        skip=0
-        for existing in "${ADJUST_FILES[@]}"; do
-          if [ "$file" = "$existing" ]; then
-            skip=1
-            break
-          fi
-        done
-        [ $skip -eq 0 ] && [ -n "$file" ] && ADJUST_FILES+=("$file")
-      done < <(find Assets -name "Adjust.cs" -type f 2>/dev/null | grep -v "Assets/Adjust/Scripts/Adjust.cs")
+      done < <(find . -name "Adjust.cs" -type f -not -path '*/.git/*' 2>/dev/null)
 
       # Check if any files found
       if [ ${#ADJUST_FILES[@]} -eq 0 ]; then
