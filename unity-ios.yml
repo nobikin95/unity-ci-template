@@ -59,6 +59,13 @@ variables:
       echo "NOTIFY_DEV is not set, setting to U043T5P1G9Z"
       export NOTIFY_DEV="U043T5P1G9Z"
     fi
+
+    # Normalize SLACK_USER_IDS by removing spaces
+    if [ -n "$SLACK_USER_IDS" ]; then
+      # Remove all spaces from SLACK_USER_IDS
+      export SLACK_USER_IDS=$(echo "$SLACK_USER_IDS" | tr -d ' ')
+      echo "Normalized SLACK_USER_IDS: $SLACK_USER_IDS"
+    fi
   - sed -i '' "s/\(bundleVersion:\).*/\1 \"$CURRENT_VERSION\"/" ProjectSettings/ProjectSettings.asset
   - sed -i '' "s/\(m_ShowUnitySplashLogo:\).*/\1 0/" ProjectSettings/ProjectSettings.asset
   - echo "Updated bundleVersion in ProjectSettings.asset to $CURRENT_VERSION"
