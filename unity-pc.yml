@@ -75,6 +75,11 @@ variables:
 
 build_pc_release:
   stage: build_pc
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^build-pc\/ver_*$/'
+      when: on_success 
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   before_script:
     - *common_before_script
     - export BUILD_TYPE="🖥️PC"
@@ -110,7 +115,7 @@ build_pc_release:
     - cd Build/PC
     # Zip everything in the folder (Game.exe, Game_Data, etc.)
     - zip -r "../$ZIP_NAME" .
-    - cd ../..s
+    - cd ../..
     - ZIP_PATH="Build/$ZIP_NAME"
     
     - echo "Zip file created at $ZIP_PATH"
