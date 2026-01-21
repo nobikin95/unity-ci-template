@@ -50,7 +50,7 @@ variables:
 
   # Step 4: If still not found, exit with error
   - if [ -z "$UNITY_VERSION" ]; then
-      echo "❌ No matching Unity version found for ${PROJECT_UNITY_VERSION}";
+      echo "  No matching Unity version found for ${PROJECT_UNITY_VERSION}";
       echo "Available versions ${UNITY_INSTALLED_VERSIONS}";
       exit 1;
     else
@@ -82,19 +82,19 @@ variables:
   # Validate required keystore configuration
   - echo "Checking keystore configuration..."
   - if [ -z "$KEYSTORE_PATH" ]; then
-      echo "❌ ERROR KEYSTORE_PATH is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      echo "  ERROR KEYSTORE_PATH is not set. Please configure keystore settings in GitLab CI/CD variables.";
       exit 1;
     fi
   - if [ -z "$KEYSTORE_PASS" ]; then
-      echo "❌ ERROR KEYSTORE_PASS is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      echo "  ERROR KEYSTORE_PASS is not set. Please configure keystore settings in GitLab CI/CD variables.";
       exit 1;
     fi
   - if [ -z "$KEY_ALIAS" ]; then
-      echo "❌ ERROR KEY_ALIAS is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      echo "  ERROR KEY_ALIAS is not set. Please configure keystore settings in GitLab CI/CD variables.";
       exit 1;
     fi
   - if [ -z "$KEY_PASS" ]; then
-      echo "❌ ERROR KEY_PASS is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      echo "  ERROR KEY_PASS is not set. Please configure keystore settings in GitLab CI/CD variables.";
       exit 1;
     fi
   - echo "✅ Keystore configuration validated successfully"
@@ -1736,7 +1736,7 @@ upload_internal:
           # Check for google-services.json
           GOOGLE_SERVICES_JSON="Assets/google-services.json"
           if [ ! -f "$GOOGLE_SERVICES_JSON" ]; then
-             echo "❌ Error: $GOOGLE_SERVICES_JSON not found. Cannot determine App ID.";
+             echo "  Error: $GOOGLE_SERVICES_JSON not found. Cannot determine App ID.";
           else
              # Ensure jq is available (used previously in script so likely yes)
              # Extract App ID based on package name
@@ -1745,7 +1745,7 @@ upload_internal:
              APP_ID=$(jq -r --arg pkg "$GOOGLE_PLAY_PACKAGE_NAME" '.client[] | select(.client_info.android_client_info.package_name == $pkg) | .client_info.mobilesdk_app_id' "$GOOGLE_SERVICES_JSON");
              
              if [ -z "$APP_ID" ] || [ "$APP_ID" == "null" ]; then
-               echo "❌ Error: Could not find mobilesdk_app_id for $GOOGLE_PLAY_PACKAGE_NAME in $GOOGLE_SERVICES_JSON";
+               echo "  Error: Could not find mobilesdk_app_id for $GOOGLE_PLAY_PACKAGE_NAME in $GOOGLE_SERVICES_JSON";
              else
                echo "🆔 Found App ID: $APP_ID";
                
@@ -1765,7 +1765,7 @@ upload_internal:
                if firebase crashlytics:symbols:upload --app "$APP_ID" "$SYMBOLS_PATH"; then
                   echo "✅ Symbol upload successful!";
                else
-                  echo "❌ Symbol upload failed!";
+                  echo "  Symbol upload failed!";
                   # We verify success but do not exit 1 to not block the main deployment functionality if this is secondary
                fi
              fi
@@ -1793,7 +1793,7 @@ upload_internal:
       set -e  # Re-enable exit on error
 
       if [ $FASTLANE_EXIT_CODE -ne 0 ]; then
-        echo "❌ Fastlane upload_internal failed with exit code $FASTLANE_EXIT_CODE"
+        echo "  Fastlane upload_internal failed with exit code $FASTLANE_EXIT_CODE"
         echo "📤 Uploading AAB and symbols files to Slack as fallback..."
 
         # Prepare failure message
@@ -1847,7 +1847,7 @@ upload_internal:
           python3 Assets/cicd/ci/send_slack_direct_message.py uploaded_to_internal_fail project_name="$PROJECT_NAME" platform="Android" build_name="$AAB_NAME" notify_user="$NOTIFY_DEV" || echo "Failed to send DM notification"
         fi
 
-        echo "❌ Exiting with failure status"
+        echo "  Exiting with failure status"
         exit $FASTLANE_EXIT_CODE
       else
         echo "✅ Upload internal completed successfully. Please check fastlane_upload.log for warnings."
@@ -1937,7 +1937,7 @@ clear_library_cache:
           echo "✅ Successfully cleared Library directory"
           echo "📊 New size: $(du -sh ./Library 2>/dev/null || echo '0')"
         else
-          echo "❌ Failed to clear Library directory"
+          echo "  Failed to clear Library directory"
           echo "⚠️ Please check permissions and try again"
           exit 1
         fi
