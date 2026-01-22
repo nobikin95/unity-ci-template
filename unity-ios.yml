@@ -744,6 +744,7 @@ build_ios_ipa:
     - *common_update_version
     
     # Upload IPA file to Slack channel
+    - SLACK_CHANNEL_ID="C07UU3A6H0R"
     - |
       echo "📤 Uploading IPA file to Slack channel..."
       IPA_FILE=$(find "$CI_PROJECT_DIR/Build/iOS" -name "*.ipa" | head -n 1)
