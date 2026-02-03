@@ -11,8 +11,166 @@ variables:
   - git submodule sync
   # Clone Assets/cicd to latest version (non-recursive)
   - git submodule update --init --remote --checkout Assets/cicd
-  # Clone all other submodules recursively (exclude Assets/cicd)
-  - git config --file .gitmodules --get-regexp path | awk '$2 != "Assets/cicd" {print $2}' | xargs -r -I {} git submodule update --init --recursive --checkout {}
+
+  # Helper function to detect error type from build log
+  - |
+    detect_error_type() {
+      local log_file="$1"
+      if [ ! -f "$log_file" ]; then
+        echo "UNKNOWN"
+        return
+      fi
+
+      # Check for Gradle errors (higher priority as they occur later in build)
+      if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task\|Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
+        echo "GRADLE"
+        return
+      fi
+
+      # Check for compilation errors
+      if grep -q "error CS\|Script Compilation Error\|CompilerError\|Assembly.*failed to compile" "$log_file"; then
+        echo "COMPILATION"
+        return
+      fi
+
+      # Check for missing APK (build succeeded but output missing)
+      if grep -q "Build succeeded\|Exiting batchmode successfully" "$log_file"; then
+        echo "APK_MISSING"
+        return
+      fi
+
+      echo "UNKNOWN"
+    }
+
+  # Helper function to extract error summary from build log
+  - |
+    extract_error_summary() {
+      local log_file="$1"
+      local error_type="$2"
+      local max_lines=10
+
+      if [ ! -f "$log_file" ]; then
+        echo "Log file not found"
+        return
+      fi
+
+      case "$error_type" in
+        "GRADLE")
+          # Extract Gradle error details
+          grep -A 3 "Execution failed for task\|PackageAndroidArtifact\|Gradle build failed\|Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file" | head -n $max_lines
+          ;;
+        "COMPILATION")
+          # Extract compilation errors
+          grep "error CS\|Script Compilation Error" "$log_file" | head -n $max_lines
+          ;;
+        "APK_MISSING")
+          echo "Build completed but APK file not found in output directory"
+          ;;
+        "SUBMODULE_ERROR")
+          grep "fatal:\|error:" "$log_file" | head -n $max_lines
+          ;;
+        *)
+          # Extract last 5 error lines
+          grep -i "error\|failed\|exception" "$log_file" | tail -n 5
+          ;;
+      esac
+    }
+
+  # Enhanced build failure notification with error type detection
+  - |
+    send_build_failure_notification() {
+      local error_context="${1:-UNKNOWN}"  # GRADLE_RETRY_EXHAUSTED, COMPILATION, APK_MISSING, SUBMODULE_ERROR, etc.
+      local log_file="$CI_PROJECT_DIR/build_output.log"
+
+      echo "========================================";
+      echo "Sending build failure notifications...";
+      echo "Error context: $error_context";
+      echo "========================================";
+
+      # Detect error type from log
+      local error_type=$(detect_error_type "$log_file")
+
+      # Override if context is explicit
+      if [ "$error_context" = "SUBMODULE_ERROR" ]; then
+          error_type="SUBMODULE_ERROR"
+      fi
+
+      echo "Detected error type: $error_type";
+
+      # Extract error summary
+      local error_summary=$(extract_error_summary "$log_file" "$error_type")
+
+      # Prepare detailed message based on error type
+      local detailed_message=""
+      case "$error_type" in
+        "VALIDATION")
+          detailed_message="⚠️ *Loại lỗi:* Build Validation Failed\n📋 *Nguyên nhân:* Unity PreprocessBuild validation check failed\n💡 *Khuyến nghị:*\n  • Kiểm tra Unity build log để xem validation error chi tiết\n  • Fix data/logic issue trong Assets/Editor validation scripts\n  • Validation errors KHÔNG thể fix bằng retry\n  • Check Slack notification (nếu có) để biết validator nào fail"
+          ;;
+        "GRADLE")
+          if grep -q "Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
+            detailed_message="🔧 *Loại lỗi:* Gradle Daemon Stopped\n📋 *Nguyên nhân:* Gradle build daemon bị dừng đột ngột\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory exhaustion hoặc daemon crash\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần và restart daemon\n  • Nếu vẫn fail, kiểm tra memory usage và Gradle cache"
+          else
+            detailed_message="🔧 *Loại lỗi:* Gradle Build Failure\n📋 *Nguyên nhân:* Lỗi khi package APK (PackageAndroidArtifact)\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory hoặc Gradle cache\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần\n  • Nếu vẫn fail, thử restart pipeline hoặc clean build"
+          fi
+          ;;
+        "COMPILATION")
+          detailed_message="💻 *Loại lỗi:* Compilation Error\n📋 *Nguyên nhân:* Lỗi biên dịch C# code\n💡 *Khuyến nghị:*\n  • Kiểm tra code changes gần nhất\n  • Xem chi tiết lỗi trong log bên dưới\n  • Fix code và commit lại"
+          ;;
+        "APK_MISSING")
+          detailed_message="📦 *Loại lỗi:* APK File Missing\n📋 *Nguyên nhân:* Build thành công nhưng không tìm thấy APK\n💡 *Khuyến nghị:*\n  • Kiểm tra BuildScript.BuildAPK method\n  • Verify output path configuration"
+          ;;
+        "SUBMODULE_ERROR")
+          detailed_message="🔗 *Loại lỗi:* Submodule Update Failed\n📋 *Nguyên nhân:* Không thể pull code từ submodule (thường do commit hash không tồn tại trên remote)\n💡 *Khuyến nghị:*\n  • Kiểm tra .gitmodules và git status\n  • Xóa thư mục submodule lỗi và cập nhật lại\n  • Đảm bảo commit hash trong superproject tồn tại ở submodule remote"
+          ;;
+        *)
+          detailed_message="❓ *Loại lỗi:* Unknown Build Failure\n💡 *Khuyến nghị:* Kiểm tra full log để xác định nguyên nhân"
+          ;;
+      esac
+
+      # Send webhook notification with error type
+      python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" build_type="${BUILD_TYPE}" version="${VERSION_INFO}" platform="Android";
+
+      # Send detailed DM to developer if NOTIFY_DEV is set
+      if [ -n "$NOTIFY_DEV" ]; then
+        echo "Sending detailed error report to developer(s): $NOTIFY_DEV";
+
+        # Create temporary file with enhanced error details
+        local temp_error_file="/tmp/build_error_details_$$.txt"
+        {
+          echo "=== BUILD FAILURE DETAILS ===";
+          echo "";
+          echo "Error Type: $error_type";
+          echo "Error Context: $error_context";
+          echo "";
+          echo "=== ERROR SUMMARY ===";
+          echo "$error_summary";
+          echo "";
+          echo "=== RECOMMENDATIONS ===";
+          echo "$detailed_message" | sed 's/\\n/\n/g' | sed 's/\*//g';
+        } > "$temp_error_file"
+
+        # Send DM with enhanced details
+        python3 Assets/cicd/ci/send_slack_direct_message.py build_fail \
+          project_name="$PROJECT_NAME" \
+          notify_user="$NOTIFY_DEV" \
+          platform="Android" \
+          build_type="${BUILD_TYPE}" \
+          version="${VERSION_INFO}" \
+          log_file="$temp_error_file";
+
+        rm -f "$temp_error_file"
+      else
+        echo "NOTIFY_DEV not set, skipping direct message.";
+      fi
+
+      echo "Build failure notifications sent.";
+    }
+
+  # Clone all other submodules recursively (exclude Assets/cicd) with error handling
+  - |
+    set -o pipefail
+    git config --file .gitmodules --get-regexp path | awk '$2 != "Assets/cicd" {print $2}' | xargs -r -I {} git submodule update --init --recursive --checkout {} 2>&1 | tee build_output.log || (send_build_failure_notification "SUBMODULE_ERROR" && exit 1)
+    set +o pipefail
   - git submodule foreach 'git reset --hard'
   - git submodule foreach 'git clean -fdx'
   
@@ -145,148 +303,6 @@ variables:
 
   # Webhook
   - python3 Assets/cicd/ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}"
-
-  # Helper function to detect error type from build log
-  - |
-    detect_error_type() {
-      local log_file="$1"
-      if [ ! -f "$log_file" ]; then
-        echo "UNKNOWN"
-        return
-      fi
-
-      # Check for Gradle errors (higher priority as they occur later in build)
-      if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task\|Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
-        echo "GRADLE"
-        return
-      fi
-
-      # Check for compilation errors
-      if grep -q "error CS\|Script Compilation Error\|CompilerError\|Assembly.*failed to compile" "$log_file"; then
-        echo "COMPILATION"
-        return
-      fi
-
-      # Check for missing APK (build succeeded but output missing)
-      if grep -q "Build succeeded\|Exiting batchmode successfully" "$log_file"; then
-        echo "APK_MISSING"
-        return
-      fi
-
-      echo "UNKNOWN"
-    }
-
-  # Helper function to extract error summary from build log
-  - |
-    extract_error_summary() {
-      local log_file="$1"
-      local error_type="$2"
-      local max_lines=10
-
-      if [ ! -f "$log_file" ]; then
-        echo "Log file not found"
-        return
-      fi
-
-      case "$error_type" in
-        "GRADLE")
-          # Extract Gradle error details
-          grep -A 3 "Execution failed for task\|PackageAndroidArtifact\|Gradle build failed\|Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file" | head -n $max_lines
-          ;;
-        "COMPILATION")
-          # Extract compilation errors
-          grep "error CS\|Script Compilation Error" "$log_file" | head -n $max_lines
-          ;;
-        "APK_MISSING")
-          echo "Build completed but APK file not found in output directory"
-          ;;
-        *)
-          # Extract last 5 error lines
-          grep -i "error\|failed\|exception" "$log_file" | tail -n 5
-          ;;
-      esac
-    }
-
-  # Enhanced build failure notification with error type detection
-  - |
-    send_build_failure_notification() {
-      local error_context="${1:-UNKNOWN}"  # GRADLE_RETRY_EXHAUSTED, COMPILATION, APK_MISSING, etc.
-      local log_file="$CI_PROJECT_DIR/build_output.log"
-
-      echo "========================================";
-      echo "Sending build failure notifications...";
-      echo "Error context: $error_context";
-      echo "========================================";
-
-      # Detect error type from log
-      local error_type=$(detect_error_type "$log_file")
-      echo "Detected error type: $error_type";
-
-      # Extract error summary
-      local error_summary=$(extract_error_summary "$log_file" "$error_type")
-
-      # Prepare detailed message based on error type
-      local detailed_message=""
-      case "$error_type" in
-        "VALIDATION")
-          detailed_message="⚠️ *Loại lỗi:* Build Validation Failed\n📋 *Nguyên nhân:* Unity PreprocessBuild validation check failed\n💡 *Khuyến nghị:*\n  • Kiểm tra Unity build log để xem validation error chi tiết\n  • Fix data/logic issue trong Assets/Editor validation scripts\n  • Validation errors KHÔNG thể fix bằng retry\n  • Check Slack notification (nếu có) để biết validator nào fail"
-          ;;
-        "GRADLE")
-          if grep -q "Gradle build daemon has been stopped\|daemon has been stopped\|Gradle daemon.*stopped" "$log_file"; then
-            detailed_message="🔧 *Loại lỗi:* Gradle Daemon Stopped\n📋 *Nguyên nhân:* Gradle build daemon bị dừng đột ngột\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory exhaustion hoặc daemon crash\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần và restart daemon\n  • Nếu vẫn fail, kiểm tra memory usage và Gradle cache"
-          else
-            detailed_message="🔧 *Loại lỗi:* Gradle Build Failure\n📋 *Nguyên nhân:* Lỗi khi package APK (PackageAndroidArtifact)\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory hoặc Gradle cache\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần\n  • Nếu vẫn fail, thử restart pipeline hoặc clean build"
-          fi
-          ;;
-        "COMPILATION")
-          detailed_message="💻 *Loại lỗi:* Compilation Error\n📋 *Nguyên nhân:* Lỗi biên dịch C# code\n💡 *Khuyến nghị:*\n  • Kiểm tra code changes gần nhất\n  • Xem chi tiết lỗi trong log bên dưới\n  • Fix code và commit lại"
-          ;;
-        "APK_MISSING")
-          detailed_message="📦 *Loại lỗi:* APK File Missing\n📋 *Nguyên nhân:* Build thành công nhưng không tìm thấy APK\n💡 *Khuyến nghị:*\n  • Kiểm tra BuildScript.BuildAPK method\n  • Verify output path configuration"
-          ;;
-        *)
-          detailed_message="❓ *Loại lỗi:* Unknown Build Failure\n💡 *Khuyến nghị:* Kiểm tra full log để xác định nguyên nhân"
-          ;;
-      esac
-
-      # Send webhook notification with error type
-      python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" build_type="${BUILD_TYPE}" version="${VERSION_INFO}" platform="Android";
-
-      # Send detailed DM to developer if NOTIFY_DEV is set
-      if [ -n "$NOTIFY_DEV" ]; then
-        echo "Sending detailed error report to developer(s): $NOTIFY_DEV";
-
-        # Create temporary file with enhanced error details
-        local temp_error_file="/tmp/build_error_details_$$.txt"
-        {
-          echo "=== BUILD FAILURE DETAILS ===";
-          echo "";
-          echo "Error Type: $error_type";
-          echo "Error Context: $error_context";
-          echo "";
-          echo "=== ERROR SUMMARY ===";
-          echo "$error_summary";
-          echo "";
-          echo "=== RECOMMENDATIONS ===";
-          echo "$detailed_message" | sed 's/\\n/\n/g' | sed 's/\*//g';
-        } > "$temp_error_file"
-
-        # Send DM with enhanced details
-        python3 Assets/cicd/ci/send_slack_direct_message.py build_fail \
-          project_name="$PROJECT_NAME" \
-          notify_user="$NOTIFY_DEV" \
-          platform="Android" \
-          build_type="${BUILD_TYPE}" \
-          version="${VERSION_INFO}" \
-          log_file="$temp_error_file";
-
-        rm -f "$temp_error_file"
-      else
-        echo "NOTIFY_DEV not set, skipping direct message.";
-      fi
-
-      echo "Build failure notifications sent.";
-    }
 
   # Helper function to retry Unity build với khả năng phát hiện lỗi Gradle và kiểm tra artifact
   # Usage: retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK"
