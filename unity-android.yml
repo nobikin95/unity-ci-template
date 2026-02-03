@@ -1902,9 +1902,15 @@ upload_internal:
 
       CLEAN_CHANGELOG=$(echo "$CHANGELOG" | sed 's/|//g; s/[[:cntrl:]]//g')
 
+      # Extract versions from AAB_NAME (Format: Project_bundle_106_version_1.105.1.aab)
+      BUNDLE_VERSION=$(echo "$AAB_NAME" | sed -n 's/.*bundle_\([0-9]*\).*/\1/p')
+      APP_VERSION=$(echo "$AAB_NAME" | sed -n 's/.*version_\(.*\)\.aab/\1/p')
+
       formatted_message=$(printf "$message\n\n%s" "$NOTIFY_USERS" | sed \
         -e "s@{project_name}@${PROJECT_NAME}@g" \
         -e "s@{platform}@Android@g" \
+        -e "s@{bundle_version}@${BUNDLE_VERSION}@g" \
+        -e "s@{app_version}@${APP_VERSION}@g" \
         -e "s@{build_name}@${AAB_NAME}@g" \
         -e "s@\\*{change_log}\\*@@g")  # Xóa *{change_log}* tạm thời
 
