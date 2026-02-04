@@ -12,7 +12,7 @@ variables:
   - git config --file .gitmodules --get-regexp path | awk '$2 != "Assets/cicd" {print $2}' | xargs -r -I {} git submodule update --init --recursive --checkout {}
   - git submodule foreach 'git reset --hard'
   - git submodule foreach 'git clean -fdx'
-  
+
   # Unity version selection logic: Prefer higher or equal version
   - echo "Setting up environment..."
   - export PROJECT_UNITY_VERSION=$(grep "m_EditorVersion:" ProjectSettings/ProjectVersion.txt | awk '{print $2}')
@@ -23,35 +23,35 @@ variables:
   # Step 1: Try exact match first
   - export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep -E "^${PROJECT_UNITY_VERSION}$" | head -n 1)
   - if [ -n "$UNITY_VERSION" ]; then
-      echo "✓ Found exact match ${UNITY_VERSION}";
+    echo "✓ Found exact match ${UNITY_VERSION}";
     fi
 
   # Step 2: If no exact match, try to find higher version in same major.minor
   - if [ -z "$UNITY_VERSION" ]; then
-      echo "Exact version not found, looking for higher version in same major.minor...";
-      export MAJOR_MINOR="${PROJECT_UNITY_VERSION%.*}";
-      export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep "^${MAJOR_MINOR}\." | sort -V | awk -v target="$PROJECT_UNITY_VERSION" '$0 > target {print; exit}');
-      if [ -n "$UNITY_VERSION" ]; then
-        echo "✓ Found higher version ${UNITY_VERSION} (>= ${PROJECT_UNITY_VERSION})";
-      fi
+    echo "Exact version not found, looking for higher version in same major.minor...";
+    export MAJOR_MINOR="${PROJECT_UNITY_VERSION%.*}";
+    export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep "^${MAJOR_MINOR}\." | sort -V | awk -v target="$PROJECT_UNITY_VERSION" '$0 > target {print; exit}');
+    if [ -n "$UNITY_VERSION" ]; then
+    echo "✓ Found higher version ${UNITY_VERSION} (>= ${PROJECT_UNITY_VERSION})";
+    fi
     fi
 
   # Step 3: If no higher version, fallback to lower version in same major.minor
   - if [ -z "$UNITY_VERSION" ]; then
-      echo "No higher version found, looking for lower version in same major.minor...";
-      export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep "^${MAJOR_MINOR}\." | sort -V | awk -v target="$PROJECT_UNITY_VERSION" '$0 < target {candidate=$0} END {print candidate}');
-      if [ -n "$UNITY_VERSION" ]; then
-        echo "⚠ Using lower version ${UNITY_VERSION} (< ${PROJECT_UNITY_VERSION})";
-      fi
+    echo "No higher version found, looking for lower version in same major.minor...";
+    export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep "^${MAJOR_MINOR}\." | sort -V | awk -v target="$PROJECT_UNITY_VERSION" '$0 < target {candidate=$0} END {print candidate}');
+    if [ -n "$UNITY_VERSION" ]; then
+    echo "⚠ Using lower version ${UNITY_VERSION} (< ${PROJECT_UNITY_VERSION})";
+    fi
     fi
 
   # Step 4: If still not found, exit with error
   - if [ -z "$UNITY_VERSION" ]; then
-      echo "❌ No matching Unity version found for ${PROJECT_UNITY_VERSION}";
-      echo "Available versions ${UNITY_INSTALLED_VERSIONS}";
-      exit 1;
+    echo "❌ No matching Unity version found for ${PROJECT_UNITY_VERSION}";
+    echo "Available versions ${UNITY_INSTALLED_VERSIONS}";
+    exit 1;
     else
-      echo "Using Unity version ${UNITY_VERSION}";
+    echo "Using Unity version ${UNITY_VERSION}";
     fi
   - export UNITY_PATH="${BASE_PATH}/Unity/Hub/Editor/${UNITY_VERSION}/Editor/Unity"
 
@@ -59,11 +59,11 @@ variables:
   - if [ -z "$SLACK_CHANNEL_ID" ]; then echo "SLACK_CHANNEL_ID is not set"; else echo $SLACK_CHANNEL_ID; fi
   - if [ -z "$GITLAB_API_TOKEN" ]; then echo "GITLAB_API_TOKEN is not set"; else echo $GITLAB_API_TOKEN; fi
   - if [ -z "$SLACK_USER_IDS" ]; then echo "SLACK_USER_IDS is not set"; else echo $SLACK_USER_IDS; fi
-  
+
   # Normalize SLACK_USER_IDS by removing spaces
   - if [ -n "$SLACK_USER_IDS" ]; then
-      export SLACK_USER_IDS=$(echo "$SLACK_USER_IDS" | tr -d ' ');
-      echo "Normalized SLACK_USER_IDS: $SLACK_USER_IDS";
+    export SLACK_USER_IDS=$(echo "$SLACK_USER_IDS" | tr -d ' ');
+    echo "Normalized SLACK_USER_IDS $SLACK_USER_IDS";
     fi
 
   # Extract the current MAJOR, MINOR, PATCH versions from APK_VERSION
@@ -77,7 +77,7 @@ build_pc_release:
   stage: build_pc
   rules:
     - if: '$CI_COMMIT_TAG =~ /^build-pc\/ver_*$/'
-      when: on_success 
+      when: on_success
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   before_script:
@@ -92,7 +92,7 @@ build_pc_release:
     - mkdir -p Build/PC
     # Clean previous build
     - rm -rf Build/PC/*
-    
+
     # Notify start
     - python3 Assets/cicd/ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="PC" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
 
@@ -102,14 +102,14 @@ build_pc_release:
 
     # Check result
     - if [ ! -f "Build/PC/${PROJECT_NAME}.exe" ]; then
-        echo "Build failed! Output log:";
-        tail -n 50 build_output.log;
-        python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="PC" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
-        exit 1;
+      echo "Build failed! Output log:";
+      tail -n 50 build_output.log;
+      python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="PC" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
+      exit 1;
       fi
-    
+
     - echo "Build succeeded. Compressing output..."
-    
+
     # Zip the output
     - ZIP_NAME="${PROJECT_NAME}_PC_v${CURRENT_VERSION}.zip"
     - cd Build/PC
@@ -117,25 +117,25 @@ build_pc_release:
     - zip -r "../$ZIP_NAME" .
     - cd ../..
     - ZIP_PATH="Build/$ZIP_NAME"
-    
+
     - echo "Zip file created at $ZIP_PATH"
-    
+
     # Upload to Slack
     - echo "Uploading to Slack..."
     - python3 Assets/cicd/ci/upload_slack.py "$ZIP_PATH" "PC Build - ${PROJECT_NAME} v${CURRENT_VERSION}" "$SLACK_USER_IDS"
-    
+
     # Update APK_VERSION in GitLab CI/CD Variables
     - echo "Updating APK_VERSION in GitLab CI/CD Variables..."
-    
+
     # Increase PATCH version
     - export PATCH_VERSION=$((PATCH_VERSION + 1))
-    
+
     # Construct the new version in MAJOR.MINOR.PATCH format
     - export NEW_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
     - echo "Building with new version $NEW_VERSION"
-    
+
     - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
-    
+
   artifacts:
     paths:
       - build_output.log
