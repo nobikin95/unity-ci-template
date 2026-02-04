@@ -99,12 +99,23 @@ build_pc_release:
 
     # Build
     - echo "Running Unity build command..."
-    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Win64 -executeMethod BuildScript.BuildWindows -buildPath "Build/PC/${PROJECT_NAME}.exe" -logFile build_output.log -batchmode -nographics -silent-crashes -quit
+    - |
+      $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Win64 -executeMethod BuildScript.BuildWindows -buildPath="Build/PC/${PROJECT_NAME}.exe" -logFile build_output.log -batchmode -nographics -silent-crashes -quit
+      UNITY_EXIT_CODE=$?
+      echo "Unity exit code: $UNITY_EXIT_CODE"
+      if [ $UNITY_EXIT_CODE -ne 0 ]; then
+        echo "❌ Unity build command failed with exit code $UNITY_EXIT_CODE"
+        echo "=== FULL BUILD LOG (last 200 lines) ==="
+        tail -n 200 build_output.log
+        echo "=== END OF LOG ==="
+        python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="PC" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+        exit $UNITY_EXIT_CODE
+      fi
 
-    # Check result
+    # Check result (double check exe exists)
     - if [ ! -f "Build/PC/${PROJECT_NAME}.exe" ]; then
-      echo "Build failed! Output log:";
-      tail -n 50 build_output.log;
+      echo "Build failed! Exe not found. Output log:";
+      tail -n 100 build_output.log;
       python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" platform="PC" build_type="$BUILD_TYPE" version="$CURRENT_VERSION";
       exit 1;
       fi
