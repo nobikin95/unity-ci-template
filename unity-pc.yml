@@ -80,6 +80,7 @@ build_pc_release:
       when: on_success
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
+  needs: []
   before_script:
     - *common_before_script
     - export BUILD_TYPE="🖥️PC"
