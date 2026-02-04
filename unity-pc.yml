@@ -76,7 +76,7 @@ variables:
 build_pc_release:
   stage: build_pc
   rules:
-    - if: '$CI_COMMIT_TAG =~ /^build-pc\/ver_*$/'
+    - if: '$CI_COMMIT_TAG =~ /^build-pc\/ver_.*$/'
       when: on_success
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
