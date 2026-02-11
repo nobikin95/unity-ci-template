@@ -73,8 +73,7 @@ variables:
   - echo "Updated m_ShowUnitySplashLogo in ProjectSettings.asset to 0"
   - grep "m_ShowUnitySplashLogo:" ProjectSettings/ProjectSettings.asset
 
-.common_build_steps: &common_build_steps
-  # Update Scripting Symbol
+.common_build_steps: &common_build_steps # Update Scripting Symbol
   - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
   - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
   - echo "Starting iOS .ipa build..."
@@ -181,11 +180,10 @@ variables:
         fi
       done
     }
-    
+
     # Execute the build function
     perform_unity_build_with_retry
   - echo "Done..."
-  
   # Thêm validation sau khi verify_frameworks.sh
   - echo "Validating Xcode project after framework verification..."
   - | # Use block scalar for command with || error handling
@@ -222,19 +220,19 @@ variables:
   - echo "Next IOS_VERSION will be $NEW_VERSION"
   - 'curl --fail -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/IOS_VERSION"'
 
-.handle_xcode_error_script_content: &handle_xcode_error_script_content
-  error_message="$1" 
-  log_file="$2" 
+.handle_xcode_error_script_content:
+  &handle_xcode_error_script_content error_message="$1"
+  log_file="$2"
   echo "-----------------------------------------------------"
   echo "[ERROR] $error_message"
   if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-    echo "Last 50 lines of $log_file:"
-    tail -n 50 "$log_file"
+  echo "Last 50 lines of $log_file:"
+  tail -n 50 "$log_file"
   fi
   echo "-----------------------------------------------------"
   python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
   if [ -n "$NOTIFY_DEV" ]; then
-    python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+  python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
   fi
   exit 1
 
@@ -284,7 +282,7 @@ build_ios_release:
     - echo "Fetching changelog..."
     - chmod +x Assets/cicd/ci/fetch_changelog.sh
     - bash Assets/cicd/ci/fetch_changelog.sh --target_branch="ios-release" --tag="$CI_COMMIT_TAG"
-    
+
     # Read changelog from file
     - |
       if [ -f "changelog.txt" ]; then
@@ -319,7 +317,6 @@ build_ios_release:
       echo "Formatted Slack message:"
       echo "$start_build_message"
     - python3 Assets/cicd/ci/send_slack_message.py "C07UU3A6H0R" "$start_build_message" "$SLACK_BOT_TOKEN"
-
     # Add step to clean DerivedData before Xcode build
     - echo "Ensuring clean build environment by removing previous DerivedData..."
     - rm -rf "$XCODE_DERIVED_DATA_PATH"
@@ -540,23 +537,23 @@ build_ios_release:
     # ========================================
     - echo ""
     - echo "🧹 Starting storage cleanup to free disk space..."
-    
+
     # 1. Clean DerivedData (CRITICAL - 5-15GB)
     - echo "  → Cleaning DerivedData..."
     - rm -rf "$XCODE_DERIVED_DATA_PATH" || true
     - echo "  ✅ DerivedData cleaned"
-    
+
     # 2. Clean build artifacts (IMPORTANT - 10-15GB)
     - echo "  → Cleaning archives and exported IPAs..."
     - rm -rf Build/iOS/*.xcarchive || true
     - rm -rf Build/iOS/ExportedIPA_Release || true
     - echo "  ✅ Build artifacts cleaned"
-    
+
     # 3. Clean log files
     - echo "  → Cleaning log files..."
     - rm -f changelog.* || true
     - echo "  ✅ Log files cleaned"
-    
+
     - echo "✅ Storage cleanup completed!"
     - echo "📊 Remaining disk space:"
     - df -h | grep -E 'Filesystem|disk' || df -h
@@ -612,13 +609,13 @@ build_ios_ipa:
       when: manual
   script:
     - *common_build_steps
-    
+
     # Add Firebase Debug argument to Xcode scheme (DEVELOPMENT BUILD ONLY)
     - echo "🔥 Adding Firebase Debug argument to Xcode scheme..."
     - chmod +x Assets/cicd/ci/add_firebase_debug_argument.py
     - python3 Assets/cicd/ci/add_firebase_debug_argument.py Build/iOS
     - echo "✅ Firebase Debug argument added to Xcode scheme"
-    
+
     - MAIN_DEV="U043T5P1G9Z"
     # Firebase Debug View is automatically configured during Unity build
     # The BuildScript.cs post-processing adds debug flags to Info.plist
@@ -742,7 +739,7 @@ build_ios_ipa:
       fi
     - cd "$CI_PROJECT_DIR"
     - *common_update_version
-    
+
     # Upload IPA file to Slack channel
     - SLACK_CHANNEL_ID="C07UU3A6H0R"
     - |
@@ -801,23 +798,23 @@ build_ios_ipa:
     # ========================================
     - echo ""
     - echo "🧹 Starting storage cleanup to free disk space..."
-    
+
     # 1. Clean DerivedData (CRITICAL - 5-15GB)
     - echo "  → Cleaning DerivedData..."
     - rm -rf "$XCODE_DERIVED_DATA_PATH" || true
     - echo "  ✅ DerivedData cleaned"
-    
+
     # 2. Clean build artifacts (IMPORTANT - 10-15GB)
     - echo "  → Cleaning archives and exported IPAs..."
     - rm -rf Build/iOS/*.xcarchive || true
     - rm -rf Build/iOS/ExportedIPA_Dev || true
     - echo "  ✅ Build artifacts cleaned"
-    
+
     # 3. Clean log files
     - echo "  → Cleaning log files..."
     - rm -f changelog.* || true
     - echo "  ✅ Log files cleaned"
-    
+
     - echo "✅ Storage cleanup completed!"
     - echo "📊 Remaining disk space:"
     - df -h | grep -E 'Filesystem|disk' || df -h
@@ -851,7 +848,7 @@ build_xcode_project:
       when: manual
   script:
     - *common_build_steps
-    
+
     # Fix MolocoSDK signature issue (revoked certificate)
     - echo "Applying MolocoSDK signature fix..."
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh"
@@ -866,3 +863,34 @@ build_xcode_project:
         echo " Xcode project not found!"
         exit 1
       fi
+
+cleanup_build_workspace:
+  stage: .post
+  tags:
+    - macos
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - echo "Cleaning up build workspace to free disk space..."
+    - echo "Current CI_PROJECT_DIR $CI_PROJECT_DIR"
+
+    # Calculate the concurrency root directory (e.g. .../builds/TOKEN/CONCURRENCY)
+    # CI_PROJECT_DIR is usually .../CONCURRENCY/NAMESPACE/PROJECT
+    # We go up 2 levels:
+    # 1. .../CONCURRENCY/NAMESPACE
+    # 2. .../CONCURRENCY
+    - export TARGET_DIR=$(dirname $(dirname "$CI_PROJECT_DIR"))
+    - echo "Target directory to delete $TARGET_DIR"
+
+    - |
+      if [ -d "$TARGET_DIR" ] && [[ "$TARGET_DIR" == *"/builds/"* ]]; then
+        echo "Removing Directory $TARGET_DIR"
+        # Move to a safe location before deleting
+        cd /tmp
+        rm -rf "$TARGET_DIR"
+        echo "✅ Cleanup completed."
+      else
+        echo "⚠️ Target directory seems unsafe to delete or does not exist: $TARGET_DIR"
+        echo "Skipping cleanup to prevent accidental data loss."
+      fi
+  when: manual
