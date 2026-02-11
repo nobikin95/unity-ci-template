@@ -894,5 +894,7 @@ cleanup_build_workspace:
         echo "Skipping cleanup to prevent accidental data loss."
       fi
   rules:
+    - if: "$CI_COMMIT_TAG =~ /cleanup_build_workspace/"
+      when: manual
     - when: manual
       allow_failure: true
