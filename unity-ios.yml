@@ -865,7 +865,7 @@ build_xcode_project:
       fi
 
 cleanup_build_workspace:
-  stage: .post
+  stage: cleanup
   tags:
     - macos
   variables:
