@@ -266,7 +266,6 @@ build_ios_release:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-      - script_failure
   tags:
     - macos
   timeout: 60m
@@ -598,7 +597,6 @@ build_ios_ipa:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-      - script_failure
   tags:
     - macos
   timeout: 60m
@@ -839,7 +837,6 @@ build_xcode_project:
       - stuck_or_timeout_failure
       - api_failure
       - unknown_failure
-      - script_failure
   tags:
     - macos
   timeout: 60m

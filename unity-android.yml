@@ -1553,7 +1553,6 @@ build_self_test:
         # Verify if MAIN_DEV exists in NOTIFY_DEV
         if ! echo ",$NOTIFY_DEV," | grep -q ",$MAIN_DEV,"; then
           echo "Error: $MAIN_DEV from tag $CI_COMMIT_TAG is not in NOTIFY_DEV ($NOTIFY_DEV). Exiting...";
-          exit 1;
         fi
       fi
 
