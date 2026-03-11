@@ -140,6 +140,11 @@ variables:
           exit 1;
         }
         
+        # Fix system framework embed settings (CodeSignOnCopy added by plugins/CocoaPods after Unity PostProcessBuild)
+        echo "🔧 Fixing system framework embed settings..."
+        chmod +x Assets/cicd/ci/fix_system_framework_embed.sh
+        Assets/cicd/ci/fix_system_framework_embed.sh
+
         echo "⚡ Running Xcode Framework Verification..."
         chmod +x Assets/cicd/ci/verify_frameworks.sh
         
