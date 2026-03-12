@@ -333,6 +333,16 @@ build_ios_release:
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
 
+    # Fix CODE_SIGN_ENTITLEMENTS with Build/iOS/ prefix (causes doubled path during archive)
+    - |
+      PBXPROJ="Unity-iPhone.xcodeproj/project.pbxproj"
+      if [ -f "$PBXPROJ" ] && grep -q "CODE_SIGN_ENTITLEMENTS.*Build/iOS/" "$PBXPROJ" 2>/dev/null; then
+        echo "🔧 Fixing CODE_SIGN_ENTITLEMENTS Build/iOS/ prefix..."
+        perl -pe 's{(CODE_SIGN_ENTITLEMENTS\s*=\s*"?)(?:/Users/[^";]*/)?Build/iOS/}{$1}g' \
+          "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
+        echo "✅ Fixed CODE_SIGN_ENTITLEMENTS path"
+      fi
+
     # Check and create workspace if needed
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
     - "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
@@ -635,6 +645,16 @@ build_ios_ipa:
       "$CI_PROJECT_DIR/Assets/cicd/ci/fix_moloco_signature.sh" || echo "⚠️  MolocoSDK fix script had issues, continuing..."
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
+
+    # Fix CODE_SIGN_ENTITLEMENTS with Build/iOS/ prefix (causes doubled path during archive)
+    - |
+      PBXPROJ="Unity-iPhone.xcodeproj/project.pbxproj"
+      if [ -f "$PBXPROJ" ] && grep -q "CODE_SIGN_ENTITLEMENTS.*Build/iOS/" "$PBXPROJ" 2>/dev/null; then
+        echo "🔧 Fixing CODE_SIGN_ENTITLEMENTS Build/iOS/ prefix..."
+        perl -pe 's{(CODE_SIGN_ENTITLEMENTS\s*=\s*"?)(?:/Users/[^";]*/)?Build/iOS/}{$1}g' \
+          "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
+        echo "✅ Fixed CODE_SIGN_ENTITLEMENTS path"
+      fi
 
     # Check and create workspace if needed
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
