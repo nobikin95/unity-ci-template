@@ -333,14 +333,42 @@ build_ios_release:
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
 
-    # Fix CODE_SIGN_ENTITLEMENTS with Build/iOS/ prefix (causes doubled path during archive)
+    # Fix absolute paths in pbxproj (makes project portable for backup/other machines)
     - |
       PBXPROJ="Unity-iPhone.xcodeproj/project.pbxproj"
-      if [ -f "$PBXPROJ" ] && grep -q "CODE_SIGN_ENTITLEMENTS.*Build/iOS/" "$PBXPROJ" 2>/dev/null; then
-        echo "🔧 Fixing CODE_SIGN_ENTITLEMENTS Build/iOS/ prefix..."
-        perl -pe 's{(CODE_SIGN_ENTITLEMENTS\s*=\s*"?)(?:/Users/[^";]*/)?Build/iOS/}{$1}g' \
-          "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
-        echo "✅ Fixed CODE_SIGN_ENTITLEMENTS path"
+      if [ -f "$PBXPROJ" ]; then
+        cp "$PBXPROJ" "$PBXPROJ.pathfix_backup"
+        FIXED=0
+        # Strip absolute CI runner paths: "/Users/.../Build/iOS/X" → "X"
+        if grep -q '"/Users/.*Build/iOS/' "$PBXPROJ" 2>/dev/null; then
+          perl -pe 's{"/Users/[^"]*/Build/iOS/}{"}g' \
+            "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
+          FIXED=1
+        fi
+        # Strip unquoted absolute paths in build settings: = /Users/.../Build/iOS/X → = X
+        if grep -q '= /Users/.*Build/iOS/' "$PBXPROJ" 2>/dev/null; then
+          perl -pe 's{(?<==\s)/Users/[^\s";]*/Build/iOS/}{}g' \
+            "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
+          FIXED=1
+        fi
+        # Strip Build/iOS/ prefix only in known build settings (not in shellScript)
+        if grep -qE '(CODE_SIGN_ENTITLEMENTS|INFOPLIST_FILE|path|name)\s*=\s*"?Build/iOS/' "$PBXPROJ" 2>/dev/null; then
+          perl -pe 's{((?:CODE_SIGN_ENTITLEMENTS|INFOPLIST_FILE|path|name)\s*=\s*"?)Build/iOS/}{$1}g' \
+            "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
+          FIXED=1
+        fi
+        # Validate the file after fixes
+        if [ "$FIXED" = "1" ]; then
+          if grep -q "archiveVersion" "$PBXPROJ"; then
+            echo "✅ Fixed absolute paths in Xcode project (portable for backup)"
+            rm -f "$PBXPROJ.pathfix_backup"
+          else
+            echo "⚠️ Path fix may have corrupted pbxproj, restoring backup"
+            mv "$PBXPROJ.pathfix_backup" "$PBXPROJ"
+          fi
+        else
+          rm -f "$PBXPROJ.pathfix_backup"
+        fi
       fi
 
     # Check and create workspace if needed
@@ -646,14 +674,42 @@ build_ios_ipa:
     - echo "Building .ipa file using Xcode with automatic signing..."
     - cd Build/iOS
 
-    # Fix CODE_SIGN_ENTITLEMENTS with Build/iOS/ prefix (causes doubled path during archive)
+    # Fix absolute paths in pbxproj (makes project portable for backup/other machines)
     - |
       PBXPROJ="Unity-iPhone.xcodeproj/project.pbxproj"
-      if [ -f "$PBXPROJ" ] && grep -q "CODE_SIGN_ENTITLEMENTS.*Build/iOS/" "$PBXPROJ" 2>/dev/null; then
-        echo "🔧 Fixing CODE_SIGN_ENTITLEMENTS Build/iOS/ prefix..."
-        perl -pe 's{(CODE_SIGN_ENTITLEMENTS\s*=\s*"?)(?:/Users/[^";]*/)?Build/iOS/}{$1}g' \
-          "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
-        echo "✅ Fixed CODE_SIGN_ENTITLEMENTS path"
+      if [ -f "$PBXPROJ" ]; then
+        cp "$PBXPROJ" "$PBXPROJ.pathfix_backup"
+        FIXED=0
+        # Strip absolute CI runner paths: "/Users/.../Build/iOS/X" → "X"
+        if grep -q '"/Users/.*Build/iOS/' "$PBXPROJ" 2>/dev/null; then
+          perl -pe 's{"/Users/[^"]*/Build/iOS/}{"}g' \
+            "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
+          FIXED=1
+        fi
+        # Strip unquoted absolute paths in build settings: = /Users/.../Build/iOS/X → = X
+        if grep -q '= /Users/.*Build/iOS/' "$PBXPROJ" 2>/dev/null; then
+          perl -pe 's{(?<==\s)/Users/[^\s";]*/Build/iOS/}{}g' \
+            "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
+          FIXED=1
+        fi
+        # Strip Build/iOS/ prefix only in known build settings (not in shellScript)
+        if grep -qE '(CODE_SIGN_ENTITLEMENTS|INFOPLIST_FILE|path|name)\s*=\s*"?Build/iOS/' "$PBXPROJ" 2>/dev/null; then
+          perl -pe 's{((?:CODE_SIGN_ENTITLEMENTS|INFOPLIST_FILE|path|name)\s*=\s*"?)Build/iOS/}{$1}g' \
+            "$PBXPROJ" > "$PBXPROJ.tmp" && mv "$PBXPROJ.tmp" "$PBXPROJ"
+          FIXED=1
+        fi
+        # Validate the file after fixes
+        if [ "$FIXED" = "1" ]; then
+          if grep -q "archiveVersion" "$PBXPROJ"; then
+            echo "✅ Fixed absolute paths in Xcode project (portable for backup)"
+            rm -f "$PBXPROJ.pathfix_backup"
+          else
+            echo "⚠️ Path fix may have corrupted pbxproj, restoring backup"
+            mv "$PBXPROJ.pathfix_backup" "$PBXPROJ"
+          fi
+        else
+          rm -f "$PBXPROJ.pathfix_backup"
+        fi
       fi
 
     # Check and create workspace if needed
