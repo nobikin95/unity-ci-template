@@ -383,11 +383,11 @@ build_ios_release:
         fi
       fi
 
-    # Fix framework CFBundleShortVersionString (Apple requires max 3 parts)
-    # Some third-party SDKs (AppLovin adapters) use 4+ part versions that cause upload rejection
-    - echo "🔧 Fixing framework version strings..."
-    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_framework_versions.sh"
-    - "$CI_PROJECT_DIR/Assets/cicd/ci/fix_framework_versions.sh" "."
+    - | # Fix framework CFBundleShortVersionString (Apple requires max 3 parts)
+      # Some third-party SDKs (AppLovin adapters) use 4+ part versions that cause upload rejection
+      echo "🔧 Fixing framework version strings..."
+      chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_framework_versions.sh"
+      "$CI_PROJECT_DIR/Assets/cicd/ci/fix_framework_versions.sh" "."
 
     # Check and create workspace if needed
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
@@ -780,10 +780,10 @@ build_ios_ipa:
         fi
       fi
 
-    # Fix framework CFBundleShortVersionString (Apple requires max 3 parts)
-    - echo "🔧 Fixing framework version strings..."
-    - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_framework_versions.sh"
-    - "$CI_PROJECT_DIR/Assets/cicd/ci/fix_framework_versions.sh" "."
+    - | # Fix framework CFBundleShortVersionString (Apple requires max 3 parts)
+      echo "🔧 Fixing framework version strings..."
+      chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/fix_framework_versions.sh"
+      "$CI_PROJECT_DIR/Assets/cicd/ci/fix_framework_versions.sh" "."
 
     # Check and create workspace if needed
     - chmod +x "$CI_PROJECT_DIR/Assets/cicd/ci/create_workspace.sh"
