@@ -482,11 +482,60 @@ build_ios_release:
 
     # Run Fastlane upload
     - echo "Starting Fastlane upload to TestFlight..."
+    - export FL_APPLE_TRANSPORT_LOG_LEVEL=detailed
     - |
-      if fastlane upload_testflight 2>&1 | tee fastlane_upload.log; then
-        echo "✅ Successfully uploaded IPA to TestFlight!"
+      if fastlane upload_testflight --verbose 2>&1 | tee fastlane_upload.log; then
+        echo "✅ Fastlane command completed successfully!"
+
+        # Check iTMSTransporter logs for actual upload result
+        echo ""
+        echo "📋 Checking Apple Transporter logs..."
+        TRANSPORTER_LOG_DIR="$HOME/Library/Logs/iTMSTransporter"
+        if [ -d "$TRANSPORTER_LOG_DIR" ]; then
+          LATEST_LOG=$(ls -t "$TRANSPORTER_LOG_DIR"/*.log 2>/dev/null | head -1)
+          if [ -n "$LATEST_LOG" ]; then
+            echo "📄 Latest iTMSTransporter log: $LATEST_LOG"
+            echo "--- Last 50 lines ---"
+            tail -n 50 "$LATEST_LOG"
+            echo "--- End of iTMSTransporter log ---"
+
+            # Copy transporter log as artifact for debugging
+            cp "$LATEST_LOG" "$CI_PROJECT_DIR/itms_transporter.log" 2>/dev/null || true
+          else
+            echo "⚠️ No iTMSTransporter log files found"
+          fi
+        else
+          echo "⚠️ iTMSTransporter log directory not found at $TRANSPORTER_LOG_DIR"
+          # Try alternative locations
+          for alt_dir in "$HOME/.itmstransporter/Logs" "$HOME/Library/Caches/com.apple.amp.itmstransporter/Logs"; do
+            if [ -d "$alt_dir" ]; then
+              echo "📂 Found alternative log dir: $alt_dir"
+              ls -lt "$alt_dir" 2>/dev/null | head -5
+              LATEST_LOG=$(ls -t "$alt_dir"/*.log 2>/dev/null | head -1)
+              if [ -n "$LATEST_LOG" ]; then
+                echo "--- Last 50 lines of $LATEST_LOG ---"
+                tail -n 50 "$LATEST_LOG"
+                cp "$LATEST_LOG" "$CI_PROJECT_DIR/itms_transporter.log" 2>/dev/null || true
+              fi
+              break
+            fi
+          done
+        fi
+
+        # Verify upload by checking fastlane log for actual success indicators
+        echo ""
+        echo "🔍 Verifying upload result from fastlane log..."
+        if grep -q "Successfully uploaded package" fastlane_upload.log; then
+          echo "✅ Found 'Successfully uploaded package' in log"
+        else
+          echo "⚠️ Did NOT find 'Successfully uploaded package' in log"
+        fi
+        if grep -qi "error\|fail\|reject" fastlane_upload.log; then
+          echo "⚠️ Found error/fail/reject keywords in log:"
+          grep -i "error\|fail\|reject" fastlane_upload.log | grep -v "allow_failure\|runner_system_failure" | head -10
+        fi
       else
-        echo " Fastlane upload failed. Check fastlane_upload.log for details."
+        echo "❌ Fastlane upload failed. Check fastlane_upload.log for details."
         tail -n 100 fastlane_upload.log
         handle_xcode_error "Fastlane upload to TestFlight failed" "fastlane_upload.log"
       fi
@@ -606,6 +655,7 @@ build_ios_release:
       - archive_release.log
       - export_release.log
       - fastlane_upload.log
+      - itms_transporter.log
       - fastlane/
     when: always
     expire_in: 1 days
