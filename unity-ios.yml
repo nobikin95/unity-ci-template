@@ -950,6 +950,8 @@ cleanup_build_workspace:
     GIT_STRATEGY: none
   script:
     - echo "Cleaning up build workspace to free disk space..."
+    - echo "📊 Current disk space before cleanup:"
+    - df -h | grep -E 'Filesystem|disk' || df -h
     - echo "Current CI_PROJECT_DIR $CI_PROJECT_DIR"
 
     # Calculate the concurrency root directory (e.g. .../builds/TOKEN/CONCURRENCY)
@@ -967,6 +969,8 @@ cleanup_build_workspace:
         cd /tmp
         rm -rf "$TARGET_DIR"
         echo "✅ Cleanup completed."
+        echo "📊 Remaining disk space after cleanup:"
+        df -h | grep -E 'Filesystem|disk' || df -h
       else
         echo "⚠️ Target directory seems unsafe to delete or does not exist: $TARGET_DIR"
         echo "Skipping cleanup to prevent accidental data loss."
