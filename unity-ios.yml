@@ -491,7 +491,7 @@ build_ios_release:
     - export FL_APPLE_TRANSPORT_LOG_LEVEL=detailed
     - |
       set -o pipefail
-      if timeout 600 fastlane upload_testflight --verbose 2>&1 | tee fastlane_upload.log; then
+      if fastlane upload_testflight --verbose 2>&1 | tee fastlane_upload.log; then
         echo "✅ Fastlane upload completed successfully!"
       else
         FASTLANE_EXIT=$?
