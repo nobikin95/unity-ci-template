@@ -7,6 +7,7 @@ variables:
   REDIS_URL: "redis://localhost:6379/0"
 
 .common_before_script: &common_before_script
+  - echo "GITLAB_API_TOKEN ${GITLAB_API_TOKEN}"
   - git config url."https://thanhtq:$GITLAB_API_TOKEN@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
   # Clone Assets/cicd to latest version (non-recursive)
