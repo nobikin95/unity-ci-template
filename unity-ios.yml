@@ -258,30 +258,9 @@ variables:
 build_ios_release:
   stage: build_ios
   variables:
-    # Bypass GitLab's automatic submodule clone (fails with HTTP Basic auth).
-    # We clone submodules manually in before_script with GITLAB_CONFIG token.
     GIT_SUBMODULE_STRATEGY: none
-  before_script:
-    - export BUILD_TYPE="✈️Testflight"
-    - *common_before_script
-    # Define the shell function directly here using the content alias
-    - |
-      handle_xcode_error() {
-        error_message="$1" # First argument is the error message
-        log_file="$2"      # Second argument is the log file (optional)
-        echo "-----------------------------------------------------"
-        echo "[ERROR] $error_message"
-        if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-          echo "Last 50 lines of $log_file:"
-          tail -n 50 "$log_file"
-        fi
-        echo "-----------------------------------------------------"
-        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
-        if [ -n "$NOTIFY_DEV" ]; then
-          python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
-        fi
-        exit 1
-      }
+    BUILD_TYPE: "✈️Testflight"
+  before_script: *common_before_script
   retry:
     max: 1
     when:
@@ -298,6 +277,23 @@ build_ios_release:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
+    - |
+      handle_xcode_error() {
+        error_message="$1"
+        log_file="$2"
+        echo "-----------------------------------------------------"
+        echo "[ERROR] $error_message"
+        if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+          echo "Last 50 lines of $log_file:"
+          tail -n 50 "$log_file"
+        fi
+        echo "-----------------------------------------------------"
+        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+        if [ -n "$NOTIFY_DEV" ]; then
+          python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+        fi
+        exit 1
+      }
     - *common_build_steps
 
     # Fetch changelog for iOS release tags
@@ -645,27 +641,8 @@ build_ios_ipa:
   stage: build_ios
   variables:
     GIT_SUBMODULE_STRATEGY: none
-  before_script:
-    - export BUILD_TYPE="IPA"
-    - *common_before_script
-    # Define the shell function directly here using the content alias
-    - |
-      handle_xcode_error() {
-        error_message="$1" # First argument is the error message
-        log_file="$2"      # Second argument is the log file (optional)
-        echo "-----------------------------------------------------"
-        echo "[ERROR] $error_message"
-        if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-          echo "Last 50 lines of $log_file:"
-          tail -n 50 "$log_file"
-        fi
-        echo "-----------------------------------------------------"
-        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
-        if [ -n "$NOTIFY_DEV" ]; then
-          python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
-        fi
-        exit 1
-      }
+    BUILD_TYPE: "IPA"
+  before_script: *common_before_script
   retry:
     max: 1
     when:
@@ -682,6 +659,23 @@ build_ios_ipa:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME == "ios-develop"'
       when: manual
   script:
+    - |
+      handle_xcode_error() {
+        error_message="$1"
+        log_file="$2"
+        echo "-----------------------------------------------------"
+        echo "[ERROR] $error_message"
+        if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+          echo "Last 50 lines of $log_file:"
+          tail -n 50 "$log_file"
+        fi
+        echo "-----------------------------------------------------"
+        python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_webhook.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION"
+        if [ -n "$NOTIFY_DEV" ]; then
+          python3 "$CI_PROJECT_DIR/Assets/cicd/ci/send_slack_direct_message.py" build_fail project_name="$PROJECT_NAME" platform="🍏iOS" build_type="$BUILD_TYPE" version="$CURRENT_VERSION" notify_user="$NOTIFY_DEV" log_file="$CI_PROJECT_DIR/build_output.log"
+        fi
+        exit 1
+      }
     - *common_build_steps
 
     # Add Firebase Debug argument to Xcode scheme (DEVELOPMENT BUILD ONLY)
@@ -948,9 +942,8 @@ build_xcode_project:
   stage: build_self_test
   variables:
     GIT_SUBMODULE_STRATEGY: none
-  before_script:
-    - export BUILD_TYPE="Xcode Project"
-    - *common_before_script
+    BUILD_TYPE: "Xcode Project"
+  before_script: *common_before_script
   retry:
     max: 1
     when:
