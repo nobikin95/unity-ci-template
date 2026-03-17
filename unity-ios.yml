@@ -1,6 +1,8 @@
 variables:
   IOS_DEVELOPMENT_TEAM: "RN7J7SQGUH"
   XCODE_DERIVED_DATA_PATH: "$CI_PROJECT_DIR/DerivedData"
+  GIT_TERMINAL_PROMPT: "0"
+  GIT_SUBMODULE_STRATEGY: none
 
 .common_before_script: &common_before_script
   - |

@@ -5,6 +5,8 @@ variables:
   HASH_FILE: ".important_files_hash"
   GIT_CLEAN_FLAGS: -ffdx -e Library/ -e Temp/
   REDIS_URL: "redis://localhost:6379/0"
+  GIT_TERMINAL_PROMPT: "0"
+  GIT_SUBMODULE_STRATEGY: none
 
 .common_before_script: &common_before_script
   - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
