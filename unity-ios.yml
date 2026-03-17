@@ -3,12 +3,23 @@ variables:
   XCODE_DERIVED_DATA_PATH: "$CI_PROJECT_DIR/DerivedData"
 
 .common_before_script: &common_before_script
+  - echo "=== [DEBUG] Submodule authentication setup ==="
+  - echo "GITLAB_CONFIG is set: $([ -n \"$GITLAB_CONFIG\" ] && echo 'yes' || echo 'NO - token missing!')"
+  - echo "CI_PROJECT_DIR: $CI_PROJECT_DIR"
+  - echo "Submodule URLs from .gitmodules:"
+  - git config --file .gitmodules --get-regexp url || true
   - git clean -fdx
   - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
+  - echo "Git URL rewrite configured. Verifying:"
+  - git config --get-regexp 'url\.' || true
+  - echo "=== Syncing and cloning submodules (manual - GIT_SUBMODULE_STRATEGY=none) ==="
   - git submodule sync
   # Clone Assets/cicd to latest version (non-recursive)
-  - git submodule update --init --remote --checkout Assets/cicd
+  - echo "Cloning Assets/cicd submodule..."
+  - git submodule update --init --remote --checkout Assets/cicd || { echo "[ERROR] Failed to clone Assets/cicd. Check GITLAB_CONFIG token (scope: read_repository) and cicd project access."; exit 1; }
+  - echo "Assets/cicd cloned successfully"
   # Clone all other submodules recursively (exclude Assets/cicd)
+  - echo "Cloning other submodules..."
   - git config --file .gitmodules --get-regexp path | awk '$2 != "Assets/cicd" {print $2}' | xargs -r -I {} git submodule update --init --recursive --checkout {}
   - git submodule foreach 'git reset --hard'
   - git submodule foreach 'git clean -fdx'
@@ -243,6 +254,10 @@ variables:
 
 build_ios_release:
   stage: build_ios
+  variables:
+    # Bypass GitLab's automatic submodule clone (fails with HTTP Basic auth).
+    # We clone submodules manually in before_script with GITLAB_CONFIG token.
+    GIT_SUBMODULE_STRATEGY: none
   before_script:
     - export BUILD_TYPE="✈️Testflight"
     - *common_before_script
@@ -625,6 +640,8 @@ build_ios_release:
 
 build_ios_ipa:
   stage: build_ios
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
   before_script:
     - export BUILD_TYPE="IPA"
     - *common_before_script
@@ -926,6 +943,8 @@ build_ios_ipa:
 
 build_xcode_project:
   stage: build_self_test
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
   before_script:
     - export BUILD_TYPE="Xcode Project"
     - *common_before_script
