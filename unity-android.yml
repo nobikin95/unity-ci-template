@@ -9,7 +9,7 @@ variables:
   GIT_SUBMODULE_STRATEGY: none
 
 .common_before_script: &common_before_script
-  - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
+  - git config url."https://thanhtq:$GITLAB_API_TOKEN@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
   - git submodule sync
   # Clone Assets/cicd to latest version (non-recursive)
   - git submodule update --init --remote --checkout Assets/cicd
