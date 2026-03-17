@@ -5,8 +5,6 @@ variables:
   HASH_FILE: ".important_files_hash"
   GIT_CLEAN_FLAGS: -ffdx -e Library/ -e Temp/
   REDIS_URL: "redis://localhost:6379/0"
-  GIT_TERMINAL_PROMPT: "0"
-  GIT_SUBMODULE_STRATEGY: none
 
 .common_before_script: &common_before_script
   - git config url."https://thanhtq:$GITLAB_API_TOKEN@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
@@ -806,8 +804,6 @@ variables:
 
 build_apk_and_verify:
   stage: verify
-  variables:
-    GIT_SUBMODULE_STRATEGY: none
   resource_group: "global_verify_apk"
   retry:
     max: 1
@@ -1026,8 +1022,6 @@ build_apk_and_verify:
 
 build_apk_and_verify_manual:
   stage: verify
-  variables:
-    GIT_SUBMODULE_STRATEGY: none
   resource_group: "global_verify_apk"
   retry:
     max: 1
@@ -1242,8 +1236,6 @@ build_apk_and_verify_manual:
 
 build_aab:
   stage: build_aab
-  variables:
-    GIT_SUBMODULE_STRATEGY: none
   resource_group: global_build_aab
   retry:
     max: 1
@@ -1392,8 +1384,6 @@ build_aab:
 
 build_apk_by_tag:
   stage: build_apk_by_tag
-  variables:
-    GIT_SUBMODULE_STRATEGY: none
   resource_group: "${CI_PROJECT_ID}"
   retry:
     max: 1
@@ -1524,8 +1514,6 @@ build_apk_by_tag:
 
 build_self_test:
   stage: build_self_test
-  variables:
-    GIT_SUBMODULE_STRATEGY: none
   resource_group: "${CI_PROJECT_ID}"
   retry:
     max: 1
@@ -1643,8 +1631,6 @@ build_self_test:
 
 check_build_failure:
   stage: check
-  variables:
-    GIT_SUBMODULE_STRATEGY: none
   resource_group: "${CI_PROJECT_ID}"
   before_script:
     - export BUILD_TYPE="📱Check_Build_Daily"
@@ -1702,8 +1688,6 @@ check_build_failure:
 
 upload_internal:
   stage: deploy
-  variables:
-    GIT_SUBMODULE_STRATEGY: none
   resource_group: "${CI_PROJECT_ID}"
   needs:
     - build_aab
@@ -1955,8 +1939,6 @@ upload_internal:
 
 clear_library_cache:
   stage: check
-  variables:
-    GIT_SUBMODULE_STRATEGY: none
   resource_group: project_unique_group
   script:
     - echo "🧹 Starting Library Cache Clear Operation"
