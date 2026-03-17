@@ -5,7 +5,7 @@ variables:
   GIT_SUBMODULE_STRATEGY: none
 
 .common_before_script: &common_before_script
-  - echo "GITLAB_CONFIG is set: $([ -n '$GITLAB_CONFIG' ] && echo 'yes' || echo 'NO')"
+  - echo "GITLAB_API_TOKEN is set: $([ -n '$GITLAB_API_TOKEN' ] && echo 'yes' || echo 'NO')"
   - git clean -fdx
   - git submodule sync
   - git -c "url.https://thanhtq:${GITLAB_API_TOKEN}@gitlab.ikameglobal.com/.insteadOf=https://gitlab.ikameglobal.com/" submodule update --init --remote --checkout Assets/cicd
