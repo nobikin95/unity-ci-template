@@ -1,0 +1,1763 @@
+variables:
+  BASE_PATH: "/home/ikame"
+  APK_VERSION: "0.0.1"
+  AAB_VERSION: "1"
+  HASH_FILE: ".important_files_hash"
+  GIT_CLEAN_FLAGS: -ffdx -e Library/ -e Temp/
+  REDIS_URL: "redis://localhost:6379/0"
+  # Folders to delete before build (newline-separated for best readability)
+  FOLDERS_TO_DELETE: |
+    Assets/_Game/_Level/Level
+    Assets/_Game/_Level/Daily Challenge
+    Assets/_Game/_Level/Level  no curve
+    Assets/_Game/_Level/New_10_Level
+    Assets/3D Arts/Meshes
+
+.common_before_script: &common_before_script
+  - git config url."https://thanhtq:$GITLAB_CONFIG@gitlab.ikameglobal.com".insteadOf "https://gitlab.ikameglobal.com"
+  - git submodule sync
+  # Clone Assets/cicd to latest version (non-recursive) and ensure latest code from screwzle branch
+  - git submodule update --init --remote Assets/cicd
+  # Force update to latest version from branch screwzle
+  - |
+    cd Assets/cicd
+    CURRENT_COMMIT=$(git rev-parse HEAD)
+    echo "Current commit before update: $CURRENT_COMMIT"
+    # Remove shallow limitation if exists
+    if [ -f .git/shallow ]; then
+      echo "Removing shallow clone limitation..."
+      git fetch --unshallow 2>/dev/null || echo "Unshallow not needed or failed"
+    fi
+    # Fetch latest from remote with all refs
+    echo "Fetching latest from origin..."
+    git fetch origin +refs/heads/screwzle:refs/remotes/origin/screwzle 2>&1 || git fetch origin screwzle 2>&1 || git fetch origin 2>&1
+    # Fetch all branches to ensure we have latest
+    git fetch origin --all --prune 2>&1 || echo "Fetch all failed, continuing..."
+    # Checkout screwzle branch
+    git checkout screwzle 2>/dev/null || git checkout -b screwzle origin/screwzle 2>/dev/null || echo "Branch screwzle may not exist"
+    # Get latest commit from remote using ls-remote to bypass local cache
+    echo "Checking latest commit on remote..."
+    REMOTE_COMMIT=$(git ls-remote origin screwzle | awk '{print $1}' | head -1)
+    if [ -z "$REMOTE_COMMIT" ]; then
+      REMOTE_COMMIT=$(git rev-parse origin/screwzle 2>/dev/null || echo "")
+    fi
+    if [ -n "$REMOTE_COMMIT" ]; then
+      echo "Latest remote commit: $REMOTE_COMMIT"
+      echo "Current local commit: $(git rev-parse HEAD)"
+      # Force fetch the specific commit
+      git fetch origin "$REMOTE_COMMIT" 2>/dev/null || echo "Fetch specific commit failed"
+      # Force reset to remote branch
+      git reset --hard "origin/screwzle" 2>/dev/null || git reset --hard "$REMOTE_COMMIT" 2>/dev/null || {
+        echo "Reset failed, trying to checkout commit directly..."
+        git fetch origin screwzle
+        git reset --hard "origin/screwzle" || git reset --hard "$REMOTE_COMMIT" || echo "All reset methods failed"
+      }
+    else
+      echo "Warning: Cannot determine remote commit, trying pull..."
+      git pull origin screwzle --no-edit --rebase 2>&1 || git pull origin screwzle --no-edit 2>&1 || echo "Pull failed"
+    fi
+    NEW_COMMIT=$(git rev-parse HEAD)
+    echo "Current commit after update: $NEW_COMMIT"
+    if [ "$CURRENT_COMMIT" != "$NEW_COMMIT" ]; then
+      echo "✓ Submodule updated from $CURRENT_COMMIT to $NEW_COMMIT"
+    else
+      echo "ℹ Submodule commit unchanged: $NEW_COMMIT"
+      echo "Verifying if this is truly the latest..."
+      LATEST_REMOTE=$(git ls-remote origin screwzle | awk '{print $1}' | head -1)
+      if [ -n "$LATEST_REMOTE" ] && [ "$NEW_COMMIT" != "$LATEST_REMOTE" ]; then
+        echo "⚠ WARNING: Local commit ($NEW_COMMIT) differs from remote ($LATEST_REMOTE)"
+        echo "Attempting to force update..."
+        git fetch origin "$LATEST_REMOTE" 2>/dev/null || git fetch origin screwzle
+        git reset --hard "$LATEST_REMOTE" 2>/dev/null || git reset --hard "origin/screwzle" 2>/dev/null || echo "Force update failed"
+        FINAL_COMMIT=$(git rev-parse HEAD)
+        echo "Final commit after force update: $FINAL_COMMIT"
+      fi
+    fi
+    cd ../..
+  # Verify Assets/cicd submodule was updated correctly
+  - |
+    if [ ! -d "Assets/cicd" ]; then
+      echo "Error>> Assets/cicd submodule directory not found after update"
+      exit 1
+    fi
+    echo "Current branch and commit of Assets/cicd:"
+    cd Assets/cicd && echo "Branch: $(git branch --show-current)" && echo "Commit: $(git rev-parse HEAD)" && echo "Latest remote: $(git rev-parse origin/screwzle 2>/dev/null || echo 'N/A')" && cd ../.. || echo "Cannot determine branch/commit"
+    if [ ! -f "Assets/cicd/Assets/Editor/BuildScript.cs" ]; then
+      echo "Error>> BuildScript.cs not found in Assets/cicd submodule"
+      echo "Contents of Assets/cicd:"
+      ls -la Assets/cicd/ || echo "Cannot list Assets/cicd"
+      exit 1
+    fi
+    echo "✓ Assets/cicd submodule verified"
+  # Clone all other submodules recursively (exclude Assets/cicd)
+  - git config --file .gitmodules --get-regexp path | awk '$2 != "Assets/cicd" {print $2}' | xargs -r -I {} git submodule update --init --recursive --checkout {}
+  - git submodule foreach 'git reset --hard'
+  - git submodule foreach 'git clean -fdx'
+  
+  # Unity version selection logic: Prefer higher or equal version
+  - echo "Setting up environment..."
+  - export PROJECT_UNITY_VERSION=$(grep "m_EditorVersion:" ProjectSettings/ProjectVersion.txt | awk '{print $2}')
+  - echo "Unity version from ProjectSettings ${PROJECT_UNITY_VERSION}"
+  - if [ -d "${BASE_PATH}/Unity/Hub/Editor" ]; then export UNITY_INSTALLED_VERSIONS=$(ls ${BASE_PATH}/Unity/Hub/Editor); fi
+  - echo "Available Unity versions ${UNITY_INSTALLED_VERSIONS}"
+
+  # Step 1: Try exact match first
+  - export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep -E "^${PROJECT_UNITY_VERSION}$" | head -n 1)
+  - if [ -n "$UNITY_VERSION" ]; then
+      echo "✓ Found exact match ${UNITY_VERSION}";
+    fi
+
+  # Step 2: If no exact match, try to find higher version in same major.minor
+  - if [ -z "$UNITY_VERSION" ]; then
+      echo "Exact version not found, looking for higher version in same major.minor...";
+      export MAJOR_MINOR="${PROJECT_UNITY_VERSION%.*}";
+      export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep "^${MAJOR_MINOR}\." | sort -V | awk -v target="$PROJECT_UNITY_VERSION" '$0 > target {print; exit}');
+      if [ -n "$UNITY_VERSION" ]; then
+        echo "✓ Found higher version ${UNITY_VERSION} (>= ${PROJECT_UNITY_VERSION})";
+      fi
+    fi
+
+  # Step 3: If no higher version, fallback to lower version in same major.minor
+  - if [ -z "$UNITY_VERSION" ]; then
+      echo "No higher version found, looking for lower version in same major.minor...";
+      export UNITY_VERSION=$(echo "$UNITY_INSTALLED_VERSIONS" | tr ' ' '\n' | grep "^${MAJOR_MINOR}\." | sort -V | awk -v target="$PROJECT_UNITY_VERSION" '$0 < target {candidate=$0} END {print candidate}');
+      if [ -n "$UNITY_VERSION" ]; then
+        echo "⚠ Using lower version ${UNITY_VERSION} (< ${PROJECT_UNITY_VERSION})";
+      fi
+    fi
+
+  # Step 4: If still not found, exit with error
+  - if [ -z "$UNITY_VERSION" ]; then
+      echo "❌ No matching Unity version found for ${PROJECT_UNITY_VERSION}";
+      echo "Available versions ${UNITY_INSTALLED_VERSIONS}";
+      exit 1;
+    else
+      echo "Using Unity version ${UNITY_VERSION}";
+    fi
+  - export UNITY_PATH="${BASE_PATH}/Unity/Hub/Editor/${UNITY_VERSION}/Editor/Unity"
+
+  - if [ -z "$SLACK_BOT_TOKEN" ]; then echo "SLACK_BOT_TOKEN is not set"; else echo $SLACK_BOT_TOKEN; fi
+  - if [ -z "$SLACK_CHANNEL_ID" ]; then echo "SLACK_CHANNEL_ID is not set"; else echo $SLACK_CHANNEL_ID; fi
+  - if [ -z "$GITLAB_API_TOKEN" ]; then echo "GITLAB_API_TOKEN is not set"; else echo $GITLAB_API_TOKEN; fi
+  - if [ -z "$SLACK_USER_IDS" ]; then echo "SLACK_USER_IDS is not set"; else echo $SLACK_USER_IDS; fi
+
+  # Validate required keystore configuration
+  - echo "Checking keystore configuration..."
+  - if [ -z "$KEYSTORE_PATH" ]; then
+      echo "❌ ERROR KEYSTORE_PATH is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      exit 1;
+    fi
+  - if [ -z "$KEYSTORE_PASS" ]; then
+      echo "❌ ERROR KEYSTORE_PASS is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      exit 1;
+    fi
+  - if [ -z "$KEY_ALIAS" ]; then
+      echo "❌ ERROR KEY_ALIAS is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      exit 1;
+    fi
+  - if [ -z "$KEY_PASS" ]; then
+      echo "❌ ERROR KEY_PASS is not set. Please configure keystore settings in GitLab CI/CD variables.";
+      exit 1;
+    fi
+  - echo "✅ Keystore configuration validated successfully"
+
+  # Extract the current MAJOR, MINOR, PATCH versions
+  - export CURRENT_VERSION=$APK_VERSION
+  - export MAJOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f1)
+  - export MINOR_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f2)
+  - export PATCH_VERSION=$(echo $CURRENT_VERSION | cut -d '.' -f3)
+  - echo $CURRENT_VERSION
+  # Update bundleVersion in ProjectSettings.asset
+  - sed -i "s/\(bundleVersion:[[:space:]]*\).*/\1\"$CURRENT_VERSION\"/" ProjectSettings/ProjectSettings.asset
+  - sed -i "s/\(m_ShowUnitySplashLogo:\).*/\1 0/" ProjectSettings/ProjectSettings.asset
+  - echo "Updated bundleVersion in ProjectSettings.asset to $CURRENT_VERSION"
+  - grep "bundleVersion:" ProjectSettings/ProjectSettings.asset
+  - echo "Updated m_ShowUnitySplashLogo in ProjectSettings.asset to 0"
+  - grep "m_ShowUnitySplashLogo:" ProjectSettings/ProjectSettings.asset
+
+  # Webhook
+  - python3 Assets/cicd/ci/send_slack_webhook.py build_start project_name="$PROJECT_NAME" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}"
+
+  # Helper function to detect error type from build log
+  - |
+    detect_error_type() {
+      local log_file="$1"
+      if [ ! -f "$log_file" ]; then
+        echo "UNKNOWN"
+        return
+      fi
+
+      # Check for Gradle errors (higher priority as they occur later in build)
+      if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task" "$log_file"; then
+        echo "GRADLE"
+        return
+      fi
+
+      # Check for compilation errors
+      if grep -q "error CS\|Script Compilation Error\|CompilerError\|Assembly.*failed to compile" "$log_file"; then
+        echo "COMPILATION"
+        return
+      fi
+
+      # Check for missing APK (build succeeded but output missing)
+      if grep -q "Build succeeded\|Exiting batchmode successfully" "$log_file"; then
+        echo "APK_MISSING"
+        return
+      fi
+
+      echo "UNKNOWN"
+    }
+
+  # Helper function to extract error summary from build log
+  - |
+    extract_error_summary() {
+      local log_file="$1"
+      local error_type="$2"
+      local max_lines=10
+
+      if [ ! -f "$log_file" ]; then
+        echo "Log file not found"
+        return
+      fi
+
+      case "$error_type" in
+        "GRADLE")
+          # Extract Gradle error details
+          grep -A 3 "Execution failed for task\|PackageAndroidArtifact\|Gradle build failed" "$log_file" | head -n $max_lines
+          ;;
+        "COMPILATION")
+          # Extract compilation errors
+          grep "error CS\|Script Compilation Error" "$log_file" | head -n $max_lines
+          ;;
+        "APK_MISSING")
+          echo "Build completed but APK file not found in output directory"
+          ;;
+        *)
+          # Extract last 5 error lines
+          grep -i "error\|failed\|exception" "$log_file" | tail -n 5
+          ;;
+      esac
+    }
+
+  # Enhanced build failure notification with error type detection
+  - |
+    send_build_failure_notification() {
+      local error_context="${1:-UNKNOWN}"  # GRADLE_RETRY_EXHAUSTED, COMPILATION, APK_MISSING, etc.
+      local log_file="$CI_PROJECT_DIR/build_output.log"
+
+      echo "========================================";
+      echo "Sending build failure notifications...";
+      echo "Error context: $error_context";
+      echo "========================================";
+
+      # Detect error type from log
+      local error_type=$(detect_error_type "$log_file")
+      echo "Detected error type: $error_type";
+
+      # Extract error summary
+      local error_summary=$(extract_error_summary "$log_file" "$error_type")
+
+      # Prepare detailed message based on error type
+      local detailed_message=""
+      case "$error_type" in
+        "GRADLE")
+          detailed_message="🔧 *Loại lỗi:* Gradle Build Failure\n📋 *Nguyên nhân:* Lỗi khi package APK (PackageAndroidArtifact)\n💡 *Khuyến nghị:*\n  • Lỗi này thường do memory hoặc Gradle cache\n  • Job đã tự động retry ${MAX_RETRY_ATTEMPTS:-2} lần\n  • Nếu vẫn fail, thử restart pipeline hoặc clean build"
+          ;;
+        "COMPILATION")
+          detailed_message="💻 *Loại lỗi:* Compilation Error\n📋 *Nguyên nhân:* Lỗi biên dịch C# code\n💡 *Khuyến nghị:*\n  • Kiểm tra code changes gần nhất\n  • Xem chi tiết lỗi trong log bên dưới\n  • Fix code và commit lại"
+          ;;
+        "APK_MISSING")
+          detailed_message="📦 *Loại lỗi:* APK File Missing\n📋 *Nguyên nhân:* Build thành công nhưng không tìm thấy APK\n💡 *Khuyến nghị:*\n  • Kiểm tra BuildScript.BuildAPK method\n  • Verify output path configuration"
+          ;;
+        *)
+          detailed_message="❓ *Loại lỗi:* Unknown Build Failure\n💡 *Khuyến nghị:* Kiểm tra full log để xác định nguyên nhân"
+          ;;
+      esac
+
+      # Send webhook notification with error type
+      python3 Assets/cicd/ci/send_slack_webhook.py build_fail project_name="$PROJECT_NAME" build_type="${BUILD_TYPE}" version="${VERSION_INFO}" platform="Android";
+
+      # Send detailed DM to developer if NOTIFY_DEV is set
+      if [ -n "$NOTIFY_DEV" ]; then
+        echo "Sending detailed error report to developer(s): $NOTIFY_DEV";
+
+        # Create temporary file with enhanced error details
+        local temp_error_file="/tmp/build_error_details_$$.txt"
+        {
+          echo "=== BUILD FAILURE DETAILS ===";
+          echo "";
+          echo "Error Type: $error_type";
+          echo "Error Context: $error_context";
+          echo "";
+          echo "=== ERROR SUMMARY ===";
+          echo "$error_summary";
+          echo "";
+          echo "=== RECOMMENDATIONS ===";
+          echo "$detailed_message" | sed 's/\\n/\n/g' | sed 's/\*//g';
+        } > "$temp_error_file"
+
+        # Send DM with enhanced details
+        python3 Assets/cicd/ci/send_slack_direct_message.py build_fail \
+          project_name="$PROJECT_NAME" \
+          notify_user="$NOTIFY_DEV" \
+          platform="Android" \
+          build_type="${BUILD_TYPE}" \
+          version="${VERSION_INFO}" \
+          log_file="$temp_error_file";
+
+        rm -f "$temp_error_file"
+      else
+        echo "NOTIFY_DEV not set, skipping direct message.";
+      fi
+
+      echo "Build failure notifications sent.";
+    }
+
+  # Helper function to retry Unity build with automatic Gradle failure detection
+  # Usage: retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK"
+  #        retry_unity_build_with_gradle_detection "BuildScript.BuildAAB" "Build/Android/${AAB_NAME}" "AAB"
+  - |
+    retry_unity_build_with_gradle_detection() {
+      local build_method="${1:-BuildScript.BuildAPK}"  # Unity build method to execute
+      local build_path="${2}"                           # Output path for build artifact
+      local build_type_name="${3:-APK}"                 # Build type name for logging
+      local max_retry_attempts="${MAX_RETRY_ATTEMPTS:-2}"  # Number of retries (default: 2)
+      
+      local build_attempt=0
+      local build_success=false
+      local max_total_attempts=$((max_retry_attempts + 1))
+      local log_file="$CI_PROJECT_DIR/build_output.log"
+
+      echo "========================================";
+      echo "Starting Unity build with Gradle retry logic";
+      echo "Build Method: $build_method";
+      echo "Build Path: $build_path";
+      echo "Build Type: $build_type_name";
+      echo "Max Retries: $max_retry_attempts (Total attempts: $max_total_attempts)";
+      echo "========================================";
+
+      while [ $build_attempt -lt $max_total_attempts ]; do
+        build_attempt=$((build_attempt + 1))
+        echo "";
+        echo "========================================";
+        echo "Unity build attempt $build_attempt of $max_total_attempts";
+        echo "========================================";
+
+        # Clear log file for each attempt (except first)
+        if [ $build_attempt -gt 1 ]; then
+          echo "Clearing previous build log...";
+          echo "Starting Unity build (retry $build_attempt)..." > "$log_file"
+        fi
+
+        # Run Unity build
+        if $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod "$build_method" -buildPath="$build_path" -logFile "$log_file" -batchmode -nographics -silent-crashes -quit; then
+          echo "✓ Unity build succeeded on attempt $build_attempt";
+          build_success=true
+          break
+        else
+          local build_exit_code=$?
+          echo "✗ Unity build failed on attempt $build_attempt with exit code $build_exit_code";
+
+          # Check if this is a Gradle-related failure
+          if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task.*:launcher:package" "$log_file"; then
+            echo "⚠ Detected Gradle build failure in logs";
+            echo "Error details:";
+            grep -A 5 "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed\|Execution failed for task.*:launcher:package" "$log_file" | head -n 10 || echo "Could not extract error details";
+
+            if [ $build_attempt -lt $max_total_attempts ]; then
+              echo "⟳ Retrying build immediately (attempt $((build_attempt + 1))/$max_total_attempts)...";
+              echo "Waiting 10 seconds before retry to allow Gradle daemon to stabilize...";
+              sleep 10;
+              continue
+            else
+              echo "✗ Max retries reached ($max_retry_attempts retry after initial build). Build failed.";
+              # Gradle failure after exhausting all retries - send notification
+              send_build_failure_notification "GRADLE_RETRY_EXHAUSTED"
+              return 1;
+            fi
+          else
+            echo "✗ Non-Gradle failure detected. Not retrying.";
+            echo "Checking error type...";
+            local error_type=$(detect_error_type "$log_file")
+            echo "Detected error type: $error_type";
+            
+            # Show last 20 lines of log for debugging
+            echo "Last 20 lines of build log:";
+            tail -n 20 "$log_file";
+            
+            # Non-Gradle failure (likely compilation error) - send notification immediately
+            if [ "$error_type" = "COMPILATION" ]; then
+              send_build_failure_notification "COMPILATION_ERROR"
+            else
+              send_build_failure_notification "BUILD_FAILED_UNKNOWN"
+            fi
+            return 1;
+          fi
+        fi
+      done
+
+      if [ "$build_success" = false ]; then
+        echo "✗ Build failed after $max_total_attempts total attempts (1 initial + $max_retry_attempts retry)";
+        # This should not be reached, but handle it anyway
+        send_build_failure_notification "BUILD_FAILED_UNKNOWN"
+        return 1;
+      fi
+
+      echo "";
+      echo "✅ Unity build completed successfully after $build_attempt attempt(s)";
+      return 0;
+    }
+
+  # Helper function to find and patch all Adjust.cs files with VERIFY_TOKEN block
+  - |
+    patch_adjust_cs() {
+      echo "========================================";
+      echo "Searching for Adjust.cs files to patch...";
+      echo "========================================";
+
+      # Array to store all found Adjust.cs files
+      ADJUST_FILES=()
+
+      # 1. Search in Library/PackageCache (package manager location)
+      echo "Searching in Library/PackageCache...";
+      while IFS= read -r file; do
+        [ -n "$file" ] && ADJUST_FILES+=("$file")
+      done < <(find Library/PackageCache -path "*/com.adjust.sdk@*/Scripts/Adjust.cs" 2>/dev/null)
+
+      # 2. Search in Assets/Adjust/Scripts (legacy location)
+      echo "Searching in Assets/Adjust/Scripts...";
+      if [ -f "Assets/Adjust/Scripts/Adjust.cs" ]; then
+        ADJUST_FILES+=("Assets/Adjust/Scripts/Adjust.cs")
+      fi
+
+      # 3. Search in any other location in Assets
+      echo "Searching in other Assets locations...";
+      while IFS= read -r file; do
+        # Skip if already in array
+        skip=0
+        for existing in "${ADJUST_FILES[@]}"; do
+          if [ "$file" = "$existing" ]; then
+            skip=1
+            break
+          fi
+        done
+        [ $skip -eq 0 ] && [ -n "$file" ] && ADJUST_FILES+=("$file")
+      done < <(find Assets -name "Adjust.cs" -type f 2>/dev/null | grep -v "Assets/Adjust/Scripts/Adjust.cs")
+
+      # Check if any files found
+      if [ ${#ADJUST_FILES[@]} -eq 0 ]; then
+        echo "⚠ WARNING: No Adjust.cs files found. Skipping patch.";
+        return 0
+      fi
+
+      echo "✓ Found ${#ADJUST_FILES[@]} Adjust.cs file(s):";
+      for file in "${ADJUST_FILES[@]}"; do
+        echo "  - $file";
+      done
+      echo "";
+
+      # Patch each file
+      local patched_count=0
+      local skipped_count=0
+
+      for ADJUST_CS in "${ADJUST_FILES[@]}"; do
+        echo "Processing: $ADJUST_CS";
+
+        # Check if already patched
+        if grep -q "#if VERIFY_TOKEN" "$ADJUST_CS"; then
+          echo "  ⊘ VERIFY_TOKEN block already present. Skipping.";
+          skipped_count=$((skipped_count + 1))
+          continue
+        fi
+
+        # Check if target line exists
+        if ! grep -q "if (!this\.startManually)" "$ADJUST_CS"; then
+          echo "  ⚠ Target line 'if (!this.startManually)' not found. Skipping.";
+          skipped_count=$((skipped_count + 1))
+          continue
+        fi
+
+        # Apply patch
+        awk '
+        BEGIN { inserted=0 }
+        {
+          if (!inserted && $0 ~ /if \(!this\.startManually\)/) {
+            match($0, /^[[:space:]]*/);
+            indent=substr($0, RSTART, RLENGTH);
+            print "#if VERIFY_TOKEN";
+            print indent "this.environment = AdjustEnvironment.Sandbox;";
+            print indent "this.logLevel = AdjustLogLevel.Verbose;";
+            print "#else";
+            print indent "this.environment = AdjustEnvironment.Production;";
+            print indent "this.logLevel = AdjustLogLevel.Error;";
+            print "#endif";
+            inserted=1;
+          }
+          print $0;
+        }' "$ADJUST_CS" > "$ADJUST_CS.tmp" && mv "$ADJUST_CS.tmp" "$ADJUST_CS"
+
+        if [ $? -eq 0 ]; then
+          echo "  ✓ Successfully patched!";
+          patched_count=$((patched_count + 1))
+        else
+          echo "  ✗ Failed to patch!";
+        fi
+      done
+
+      echo "";
+      echo "========================================";
+      echo "Patch Summary:";
+      echo "  Total files found: ${#ADJUST_FILES[@]}";
+      echo "  Successfully patched: $patched_count";
+      echo "  Skipped (already patched or no target): $skipped_count";
+      echo "========================================";
+    }
+
+.send_notify_dev: &send_notify_dev
+  # Check for NOTIFY_DEV variable and send Slack message
+  - if [ -z "$NOTIFY_DEV" ]; then
+      echo "NOTIFY_DEV is not set, skipping notification";
+    else
+      python3 Assets/cicd/ci/send_slack_direct_message.py build_start project_name="$PROJECT_NAME" notify_user="$NOTIFY_DEV" platform="Android" build_type="${BUILD_TYPE}" version="${VERSION_INFO}";
+    fi
+
+.disable_app_binary : &disable_app_binary
+  - echo "Configuring settings for APK build without OBB..."
+  - echo "Before modification:"
+  - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
+  - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
+  - |
+    # Set splitApplicationBinary to 0
+    if grep -q "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset; then
+      sed -i 's/\(splitApplicationBinary:\).*/\1 0/' ProjectSettings/ProjectSettings.asset
+    else
+      sed -i '/PlayerSettings:/a\  splitApplicationBinary: 0' ProjectSettings/ProjectSettings.asset
+    fi
+    # Set APKExpansionFiles to 0
+    if grep -q "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset; then
+      sed -i 's/\(APKExpansionFiles:\).*/\1 0/' ProjectSettings/ProjectSettings.asset
+    else
+      sed -i '/PlayerSettings:/a\  APKExpansionFiles: 0' ProjectSettings/ProjectSettings.asset
+    fi
+  - echo "After modification:"
+  - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
+  - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
+
+.setup_build_obb: &setup_build_obb
+  - echo "Configuring settings for AAB build with Split Binary (Asset Pack)..."
+  - echo "Before modification:"
+  - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
+  - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
+  - |
+    # Set splitApplicationBinary to 1 (Enable split binary to create install-time asset pack inside AAB)
+    if grep -q "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset; then
+      sed -i 's/\(splitApplicationBinary:\).*/\1 1/' ProjectSettings/ProjectSettings.asset
+    else
+      sed -i '/PlayerSettings:/a\  splitApplicationBinary: 1' ProjectSettings/ProjectSettings.asset
+    fi
+    
+    # Set APKExpansionFiles to 1 (Ensure expansion setting is enabled)
+    if grep -q "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset; then
+      sed -i 's/\(APKExpansionFiles:\).*/\1 1/' ProjectSettings/ProjectSettings.asset
+    else
+      sed -i '/PlayerSettings:/a\  APKExpansionFiles: 1' ProjectSettings/ProjectSettings.asset
+    fi
+  - echo "After modification:"
+  - grep "splitApplicationBinary:" ProjectSettings/ProjectSettings.asset || echo "splitApplicationBinary not found"
+  - grep "APKExpansionFiles:" ProjectSettings/ProjectSettings.asset || echo "APKExpansionFiles not found"
+  
+.setup_screwzle: &setup_screwzle
+  # --- 1b: Build Addressables with Default Build Script ---
+  - echo "========================================"
+  - echo "Step 1b Building Addressables with Default Build Script..."
+  - echo "========================================"
+  - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -buildTarget Android -executeMethod BuildScript.BuildAddressables -logFile $CI_PROJECT_DIR/addressables_build_log.txt || {
+      echo "Error>> Addressable build failed.";
+      exit 1;
+    }
+  - echo "✓ Addressable build completed"
+
+  # --- 2: Deleting folders before build ---
+  - echo "========================================"
+  - echo "Step 2 Deleting folders before build..."
+  - echo "========================================"
+  - chmod +x Assets/cicd/ci/delete_folders.sh
+  - Assets/cicd/ci/delete_folders.sh
+  - echo "✓ Folder deletion completed"
+
+  # --- 3: Resolve Packages---
+  - echo "========================================"
+  - echo "Step 3 Resolving packages..."
+  - echo "========================================"
+  - echo "Resolving packages..."
+  - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -executeMethod BuildScript.ResolvePackage -logFile $CI_PROJECT_DIR/resolve_log.txt -quit || {
+      echo "Error>> Package Manager resolve failed.";
+      exit 1;
+    }
+  - echo "✓ Package resolution completed"
+
+  # --- 4: Remove com.unity.ads from manifest.json ---
+  - echo "========================================"
+  - echo "Step 4 Removing com.unity.ads from packages..."
+  - echo "========================================"
+  - sed -i '/"com.unity.ads"/d' Packages/manifest.json
+  - echo "✓ Removed com.unity.ads from manifest.json"
+  # Backup the original file
+  - cp Packages/packages-lock.json Packages/packages-lock.json.bak
+  # Remove "com.unity.ads" from dependencies
+  - jq 'del(.dependencies["com.unity.ads"])' Packages/packages-lock.json > tmp.json && mv tmp.json Packages/packages-lock.json
+  - echo "✓ Removed com.unity.ads from packages-lock.json"
+  - echo "========================================"
+  - echo "✓ setup_screwzle completed successfully"
+  - echo "========================================"
+   
+build_apk_and_verify:
+  stage: verify
+  resource_group: "global_verify_apk"
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+      - script_failure
+  needs:
+    - job: upload_internal
+      optional: true
+  before_script:
+    - export BUILD_TYPE="📱APK"
+    - export VERSION_INFO="${APK_VERSION}"
+    - *common_before_script
+    - chmod +x Assets/cicd/ci/wait-for-resource.sh Assets/cicd/ci/release-resource.sh
+    - Assets/cicd/ci/wait-for-resource.sh "global_verify_apk"
+  timeout: 35m
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^release\/bundle.*$/'
+      when: on_success 
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  script:
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwzle
+    - *disable_app_binary
+
+    - *setup_screwzle
+
+    # Update Scripting Symbol
+    - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
+    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
+
+    # Resolve packages to generate Library/PackageCache
+    - echo "Resolving Unity packages to generate Library/PackageCache..."
+    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve > /dev/null 2>&1 || echo "Package resolution completed with warnings"
+
+    # Patch Adjust.cs to insert VERIFY_TOKEN block before 'if (!this.startManually)'
+    # Using enhanced helper function that searches in multiple locations
+    - patch_adjust_cs
+
+    # Patch ZegoAdjust.cs to force Sandbox environment and Verbose logging for token verification
+    - |
+      echo "Patching ZegoAdjust.cs with VERIFY_TOKEN block...";
+      ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Runtime/Core/ZegoAdjust.cs" | head -n 1);
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Runtime/Core. Trying Runtime root...";
+        ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Runtime/ZegoAdjust.cs" | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Runtime. Trying Scripts...";
+        ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Scripts/ZegoAdjust.cs" | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Library/PackageCache. Trying Assets...";
+        ZEGO_ADJUST_CS=$(find Assets -name "ZegoAdjust.cs" -type f | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found. Skipping patch.";
+      else
+        echo "Found ZegoAdjust.cs at $ZEGO_ADJUST_CS";
+        if grep -q "#if VERIFY_TOKEN" "$ZEGO_ADJUST_CS"; then
+          echo "VERIFY_TOKEN block already present in ZegoAdjust.cs. Skipping insertion.";
+        else
+          awk '
+          BEGIN { inserted=0 }
+          {
+            # Insert VERIFY_TOKEN block BEFORE "AdjustSdk.AdjustConfig adjustConfig = new AdjustSdk.AdjustConfig"
+            if (!inserted && $0 ~ /AdjustSdk\.AdjustConfig adjustConfig = new AdjustSdk\.AdjustConfig/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "// Force Sandbox environment and Verbose logging for token verification";
+              print indent "Environment = AdjustEnvironment.Sandbox;";
+              print "#endif";
+              print "";
+              print $0;
+              inserted=1;
+              next;
+            }
+            # Replace the LogLevel assignment to use VERIFY_TOKEN
+            if ($0 ~ /adjustConfig\.LogLevel = AdjustLogLevel\.Error;/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "adjustConfig.LogLevel = AdjustLogLevel.Verbose;";
+              print "#else";
+              print indent "adjustConfig.LogLevel = AdjustLogLevel.Error;";
+              print "#endif";
+              next;
+            }
+            print $0;
+          }' "$ZEGO_ADJUST_CS" > "$ZEGO_ADJUST_CS.tmp" && mv "$ZEGO_ADJUST_CS.tmp" "$ZEGO_ADJUST_CS";
+          echo "ZegoAdjust.cs patched successfully.";
+        fi
+      fi
+
+    # Patch mainTemplate.gradle to enable x86_64 libraries for emulator testing
+    - |
+      echo "Patching mainTemplate.gradle to enable x86_64 libraries...";
+      MAIN_TEMPLATE="Assets/Plugins/Android/mainTemplate.gradle";
+      if [ ! -f "$MAIN_TEMPLATE" ]; then
+        echo "mainTemplate.gradle not found at $MAIN_TEMPLATE. Skipping patch.";
+      else
+        echo "Found mainTemplate.gradle at $MAIN_TEMPLATE";
+        if grep -q "^[[:space:]]*exclude[[:space:]]*(['\"]*/lib/x86_64/" "$MAIN_TEMPLATE"; then
+          echo "Found x86_64 exclusion line. Commenting it out...";
+          sed -i "s|^\([[:space:]]*\)exclude[[:space:]]*(['\"]*/lib/x86_64/[^)]*|\1// exclude ('/lib/x86_64/*' + '*')  // Commented out for emulator testing|" "$MAIN_TEMPLATE";
+          echo "mainTemplate.gradle patched successfully.";
+        elif grep -q "^[[:space:]]*//.*exclude.*x86_64" "$MAIN_TEMPLATE"; then
+          echo "x86_64 exclusion already commented out. Skipping patch.";
+        else
+          echo "x86_64 exclusion line not found. Skipping patch.";
+        fi
+      fi
+
+    # Patch ProjectSettings.asset to enable x86_64 architecture
+    - |
+      echo "Patching ProjectSettings.asset to enable x86_64 architecture...";
+      PROJECT_SETTINGS="ProjectSettings/ProjectSettings.asset";
+      if [ ! -f "$PROJECT_SETTINGS" ]; then
+        echo "ProjectSettings.asset not found at $PROJECT_SETTINGS. Skipping patch.";
+      else
+        echo "Found ProjectSettings.asset at $PROJECT_SETTINGS";
+        CURRENT_VALUE=$(grep "AndroidTargetArchitectures:" "$PROJECT_SETTINGS" | sed 's/.*AndroidTargetArchitectures: \([0-9]*\).*/\1/');
+        if [ -z "$CURRENT_VALUE" ]; then
+          echo "AndroidTargetArchitectures not found in file. Skipping patch.";
+        elif [ "$CURRENT_VALUE" = "15" ]; then
+          echo "AndroidTargetArchitectures already set to 15. Skipping patch.";
+        else
+          echo "Found AndroidTargetArchitectures: $CURRENT_VALUE. Changing to 15...";
+          sed -i "s/AndroidTargetArchitectures: [0-9]*/AndroidTargetArchitectures: 15/" "$PROJECT_SETTINGS";
+          echo "ProjectSettings.asset patched successfully.";
+          echo "AndroidTargetArchitectures changed from $CURRENT_VALUE to 15 (ARMv7+ARM64+x86_64)";
+        fi
+      fi
+
+    - mkdir -p Build/Android;
+    - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
+    - echo "$APK_NAME" > apk_name.txt
+    - echo "APK_NAME ${APK_NAME}";
+    - touch $CI_PROJECT_DIR/build_output.log
+    - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
+    - start=$(date +%s)
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+        echo "Error... Unity build failed after retries.";
+        exit 1;
+      }
+    - end=$(date +%s)
+    - echo "Time taken... $((end-start)) seconds"
+    - echo "Checking APK and directory contents after build..."
+    - ls -l Build/Android/
+    - if [ ! -f "Build/Android/${APK_NAME}" ]; then
+        echo "Error... APK file not found. Build failed.";
+        send_build_failure_notification "APK_FILE_MISSING"
+        exit 1;
+      else
+        echo "APK build succeeded.";
+      fi
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+        echo "⚠ Check ProjectSettings.asset AndroidTargetArchitectures setting";
+        echo "⚠ Expected value: 15 (ARMv7 + ARM64 + x86_64)";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
+
+    - echo "Copying APK to storage directory..."
+    - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/APK/"
+    - mkdir -p "${STORAGE_PATH}"
+    - echo "Clearing old data in ${STORAGE_PATH}..."
+    - chmod -R 775 "${STORAGE_PATH}"
+    - find "${STORAGE_PATH}" -type f -delete || echo "No files to delete or permission issue, proceeding..."
+    - cp "Build/Android/${APK_NAME}" "${STORAGE_PATH}/"
+    - echo "${STORAGE_PATH}/${APK_NAME}" > apk_path.txt
+    - echo "APK copied to ${STORAGE_PATH}"
+
+    - if [ -z "$GOOGLE_PLAY_PACKAGE_NAME" ]; then
+        echo "GOOGLE_PLAY_PACKAGE_NAME is not set. Extracting from ProjectSettings/ProjectSettings.asset...";
+        export GOOGLE_PLAY_PACKAGE_NAME=$(grep "Android:" ProjectSettings/ProjectSettings.asset | head -n 1 | awk '{print $2}');
+        echo "Extracted GOOGLE_PLAY_PACKAGE_NAME $GOOGLE_PLAY_PACKAGE_NAME";
+      fi
+
+    - chmod +x Assets/cicd/ci/start_emulator_check_token.py
+    - Assets/cicd/ci/start_emulator_check_token.py apkPath=${STORAGE_PATH}/${APK_NAME} appPackage=$GOOGLE_PLAY_PACKAGE_NAME
+
+    # Update APK_VERSION in GitLab CI/CD Variables
+    - echo "Updating APK_VERSION in GitLab CI/CD Variables..."
+
+    # Increase PATCH version for each build on the develop branch
+    - export PATCH_VERSION=$((PATCH_VERSION + 1))
+
+    # Construct the new version in MAJOR.MINOR.PATCH format
+    - export NEW_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
+    - echo "Building with new version $NEW_VERSION"
+
+    - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
+  after_script:
+    - Assets/cicd/ci/release-resource.sh "global_verify_apk"
+
+
+build_apk_and_verify_manual:
+  stage: verify
+  resource_group: "global_verify_apk"
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+      - script_failure
+  needs: []
+  before_script:
+    - export BUILD_TYPE="📱APK"
+    - export VERSION_INFO="${APK_VERSION}"
+    - *common_before_script
+    - chmod +x Assets/cicd/ci/wait-for-resource.sh Assets/cicd/ci/release-resource.sh
+    - Assets/cicd/ci/wait-for-resource.sh "global_verify_apk"
+  timeout: 35m
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  script:
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwzle
+    - *disable_app_binary
+
+    - *setup_screwzle
+
+    # Update Scripting Symbol
+    - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
+    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol="VERIFY_TOKEN" --remove_define_symbol=""
+
+    # Resolve packages to generate Library/PackageCache
+    - echo "Resolving Unity packages to generate Library/PackageCache..."
+    - $UNITY_PATH -projectPath $CI_PROJECT_DIR -batchmode -nographics -quit -executeMethod UnityEditor.PackageManager.Client.Resolve > /dev/null 2>&1 || echo "Package resolution completed with warnings"
+
+    # Patch Adjust.cs to insert VERIFY_TOKEN block before 'if (!this.startManually)'
+    # Using enhanced helper function that searches in multiple locations
+    - patch_adjust_cs
+
+    # Patch ZegoAdjust.cs to force Sandbox environment and Verbose logging for token verification
+    - |
+      echo "Patching ZegoAdjust.cs with VERIFY_TOKEN block...";
+      ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Runtime/Core/ZegoAdjust.cs" | head -n 1);
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Runtime/Core. Trying Runtime root...";
+        ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Runtime/ZegoAdjust.cs" | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Runtime. Trying Scripts...";
+        ZEGO_ADJUST_CS=$(find Library/PackageCache -path "*/com.zego.adjust@*/Scripts/ZegoAdjust.cs" | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found in Library/PackageCache. Trying Assets...";
+        ZEGO_ADJUST_CS=$(find Assets -name "ZegoAdjust.cs" -type f | head -n 1);
+      fi
+      if [ -z "$ZEGO_ADJUST_CS" ]; then
+        echo "ZegoAdjust.cs not found. Skipping patch.";
+      else
+        echo "Found ZegoAdjust.cs at $ZEGO_ADJUST_CS";
+        if grep -q "#if VERIFY_TOKEN" "$ZEGO_ADJUST_CS"; then
+          echo "VERIFY_TOKEN block already present in ZegoAdjust.cs. Skipping insertion.";
+        else
+          awk '
+          BEGIN { inserted=0 }
+          {
+            # Insert VERIFY_TOKEN block BEFORE "AdjustSdk.AdjustConfig adjustConfig = new AdjustSdk.AdjustConfig"
+            if (!inserted && $0 ~ /AdjustSdk\.AdjustConfig adjustConfig = new AdjustSdk\.AdjustConfig/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "// Force Sandbox environment and Verbose logging for token verification";
+              print indent "Environment = AdjustEnvironment.Sandbox;";
+              print "#endif";
+              print "";
+              print $0;
+              inserted=1;
+              next;
+            }
+            # Replace the LogLevel assignment to use VERIFY_TOKEN
+            if ($0 ~ /adjustConfig\.LogLevel = AdjustLogLevel\.Error;/) {
+              match($0, /^[[:space:]]*/);
+              indent=substr($0, RSTART, RLENGTH);
+              print "#if VERIFY_TOKEN";
+              print indent "adjustConfig.LogLevel = AdjustLogLevel.Verbose;";
+              print "#else";
+              print indent "adjustConfig.LogLevel = AdjustLogLevel.Error;";
+              print "#endif";
+              next;
+            }
+            print $0;
+          }' "$ZEGO_ADJUST_CS" > "$ZEGO_ADJUST_CS.tmp" && mv "$ZEGO_ADJUST_CS.tmp" "$ZEGO_ADJUST_CS";
+          echo "ZegoAdjust.cs patched successfully.";
+        fi
+      fi
+
+    # Patch mainTemplate.gradle to enable x86_64 libraries for emulator testing
+    - |
+      echo "Patching mainTemplate.gradle to enable x86_64 libraries...";
+      MAIN_TEMPLATE="Assets/Plugins/Android/mainTemplate.gradle";
+      if [ ! -f "$MAIN_TEMPLATE" ]; then
+        echo "mainTemplate.gradle not found at $MAIN_TEMPLATE. Skipping patch.";
+      else
+        echo "Found mainTemplate.gradle at $MAIN_TEMPLATE";
+        if grep -q "^[[:space:]]*exclude[[:space:]]*(['\"]*/lib/x86_64/" "$MAIN_TEMPLATE"; then
+          echo "Found x86_64 exclusion line. Commenting it out...";
+          sed -i "s|^\([[:space:]]*\)exclude[[:space:]]*(['\"]*/lib/x86_64/[^)]*|\1// exclude ('/lib/x86_64/*' + '*')  // Commented out for emulator testing|" "$MAIN_TEMPLATE";
+          echo "mainTemplate.gradle patched successfully.";
+        elif grep -q "^[[:space:]]*//.*exclude.*x86_64" "$MAIN_TEMPLATE"; then
+          echo "x86_64 exclusion already commented out. Skipping patch.";
+        else
+          echo "x86_64 exclusion line not found. Skipping patch.";
+        fi
+      fi
+
+    # Patch ProjectSettings.asset to enable x86_64 architecture
+    - |
+      echo "Patching ProjectSettings.asset to enable x86_64 architecture...";
+      PROJECT_SETTINGS="ProjectSettings/ProjectSettings.asset";
+      if [ ! -f "$PROJECT_SETTINGS" ]; then
+        echo "ProjectSettings.asset not found at $PROJECT_SETTINGS. Skipping patch.";
+      else
+        echo "Found ProjectSettings.asset at $PROJECT_SETTINGS";
+        CURRENT_VALUE=$(grep "AndroidTargetArchitectures:" "$PROJECT_SETTINGS" | sed 's/.*AndroidTargetArchitectures: \([0-9]*\).*/\1/');
+        if [ -z "$CURRENT_VALUE" ]; then
+          echo "AndroidTargetArchitectures not found in file. Skipping patch.";
+        elif [ "$CURRENT_VALUE" = "15" ]; then
+          echo "AndroidTargetArchitectures already set to 15. Skipping patch.";
+        else
+          echo "Found AndroidTargetArchitectures: $CURRENT_VALUE. Changing to 15...";
+          sed -i "s/AndroidTargetArchitectures: [0-9]*/AndroidTargetArchitectures: 15/" "$PROJECT_SETTINGS";
+          echo "ProjectSettings.asset patched successfully.";
+          echo "AndroidTargetArchitectures changed from $CURRENT_VALUE to 15 (ARMv7+ARM64+x86_64)";
+        fi
+      fi
+
+    - mkdir -p Build/Android;
+    - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
+    - echo "$APK_NAME" > apk_name.txt
+    - echo "APK_NAME ${APK_NAME}";
+    - touch $CI_PROJECT_DIR/build_output.log
+    - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
+    - start=$(date +%s)
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+        echo "Error... Unity build failed after retries.";
+        exit 1;
+      }
+    - end=$(date +%s)
+    - echo "Time taken... $((end-start)) seconds"
+    - echo "Checking APK and directory contents after build..."
+    - ls -l Build/Android/
+    - if [ ! -f "Build/Android/${APK_NAME}" ]; then
+        echo "Error... APK file not found. Build failed.";
+        send_build_failure_notification "APK_FILE_MISSING"
+        exit 1;
+      else
+        echo "APK build succeeded.";
+      fi
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+        echo "⚠ Check ProjectSettings.asset AndroidTargetArchitectures setting";
+        echo "⚠ Expected value: 15 (ARMv7 + ARM64 + x86_64)";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
+
+    - echo "Copying APK to storage directory..."
+    - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/APK/"
+    - mkdir -p "${STORAGE_PATH}"
+    - echo "Clearing old data in ${STORAGE_PATH}..."
+    - chmod -R 775 "${STORAGE_PATH}"
+    - find "${STORAGE_PATH}" -type f -delete || echo "No files to delete or permission issue, proceeding..."
+    - cp "Build/Android/${APK_NAME}" "${STORAGE_PATH}/"
+    - echo "${STORAGE_PATH}/${APK_NAME}" > apk_path.txt
+    - echo "APK copied to ${STORAGE_PATH}"
+
+    - if [ -z "$GOOGLE_PLAY_PACKAGE_NAME" ]; then
+        echo "GOOGLE_PLAY_PACKAGE_NAME is not set. Extracting from ProjectSettings/ProjectSettings.asset...";
+        export GOOGLE_PLAY_PACKAGE_NAME=$(grep "Android:" ProjectSettings/ProjectSettings.asset | head -n 1 | awk '{print $2}');
+        echo "Extracted GOOGLE_PLAY_PACKAGE_NAME $GOOGLE_PLAY_PACKAGE_NAME";
+      fi
+
+    - chmod +x Assets/cicd/ci/start_emulator_check_token.py
+    - Assets/cicd/ci/start_emulator_check_token.py apkPath=${STORAGE_PATH}/${APK_NAME} appPackage=$GOOGLE_PLAY_PACKAGE_NAME
+
+    # Update APK_VERSION in GitLab CI/CD Variables
+    - echo "Updating APK_VERSION in GitLab CI/CD Variables..."
+
+    # Increase PATCH version for each build on the develop branch
+    - export PATCH_VERSION=$((PATCH_VERSION + 1))
+
+    # Construct the new version in MAJOR.MINOR.PATCH format
+    - export NEW_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
+    - echo "Building with new version $NEW_VERSION"
+
+    - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
+  after_script:
+    - Assets/cicd/ci/release-resource.sh "global_verify_apk"
+
+
+build_aab:
+  stage: build_aab
+  resource_group: global_build_aab
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+      - script_failure
+  needs: []
+  before_script:
+    - export BUILD_TYPE="📱AAB"
+    - export VERSION_INFO="bundle_${AAB_VERSION}_version_${APK_VERSION}"
+    - *common_before_script
+    - *send_notify_dev
+    - chmod +x Assets/cicd/ci/wait-for-resource.sh Assets/cicd/ci/release-resource.sh
+    - Assets/cicd/ci/wait-for-resource.sh "global_build_aab"
+  timeout: 40m
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^release\/bundle.*$/'
+      when: on_success
+    
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  
+  script:
+    - export MESSAGE_TEMPLATES_FILE="Assets/cicd/ci/message_templates.json"
+    - export template_key="build_start"
+    - export message=$(jq -r --arg key "$template_key" '.[$key]' "$MESSAGE_TEMPLATES_FILE")
+    - |
+      if [ -z "$message" ] || [ "$message" == "null" ]; then
+        echo "[ERROR] Message template not found for key: $template_key"
+        exit 1
+      fi
+    - export formatted_message=$(echo "$message" | sed -e "s/{project_name}/${PROJECT_NAME}/g" -e "s/{platform}/Android_AAB/g" -e "s/{build_type}/${BUILD_TYPE}/g" -e "s/{version}/${VERSION_INFO}/g")
+    - python3 Assets/cicd/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
+    # Fetch changelog for release tags on release branch
+    - chmod +x Assets/cicd/ci/fetch_changelog.sh || true
+    - |
+      if [[ "$CI_COMMIT_TAG" =~ ^release/bundle.*$ && "$CI_BRANCH" == "release" ]]; then
+        echo "Detected release tag on release branch. Fetching changelog..."
+        Assets/cicd/ci/fetch_changelog.sh --target_branch=release
+        export CHANGELOG=$(cat changelog.tmp)
+      else
+        echo "Extracting changelog from tag..."
+        [ -z "$CI_COMMIT_TAG" ] && echo "Error: CI_COMMIT_TAG is not set. Exiting..." || true
+        echo "Tag detected: $CI_COMMIT_TAG"
+        export CHANGELOG=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG")
+        [ -z "$CHANGELOG" ] && echo "No changelog found for tag $CI_COMMIT_TAG. Exiting..." || true
+        echo "Changelog extracted:"
+        echo "$CHANGELOG"
+      fi
+    - echo "Printing CHANGELOG value:"
+    - echo "$CHANGELOG"
+    - echo "$CHANGELOG" > changelog.txt
+
+    # Update Scripting Symbol
+    - chmod +x Assets/cicd/ci/update_scripting_symbols.sh
+    - Assets/cicd/ci/update_scripting_symbols.sh --add_define_symbol=$ADD_DEFINE_SYMBOLS --remove_define_symbol=$REMOVE_DEFINE_SYMBOLS
+
+    # Clear Library directory
+    - |
+      if [ -d "./Library" ]; then
+        echo "Clearing ./Library directory..."
+        rm -rf "./Library/"* || echo "Failed to clear ./Library directory. Please check permissions."
+        echo "Contents of ./Library after clearing (if any):"
+        ls "./Library" || echo "Directory is empty"
+      else
+        echo "./Library directory not found or not accessible."
+      fi
+
+    # Update AndroidBundleVersionCode in ProjectSettings.asset
+    - sed -i "s/\(AndroidBundleVersionCode:\).*/\1 $AAB_VERSION/" ProjectSettings/ProjectSettings.asset
+    - echo "Updated AndroidBundleVersionCode in ProjectSettings.asset to $AAB_VERSION"
+    - grep "AndroidBundleVersionCode:" ProjectSettings/ProjectSettings.asset
+
+    - *setup_screwzle
+
+    # Configure AAB build with OBB (chia OBB riêng cho Google Play)
+    - *setup_build_obb
+
+    # Build AAB
+    - mkdir -p Build/Android;
+    - export AAB_NAME="${PROJECT_NAME}_bundle_${AAB_VERSION}_version_${CURRENT_VERSION}.aab";
+    - echo "$AAB_NAME" > aab_name.txt
+    - echo "AAB_NAME ${AAB_NAME}";
+    - touch $CI_PROJECT_DIR/build_output.log
+    - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAAB" "Build/Android/${AAB_NAME}" "AAB" || exit 1
+    
+    - echo "Checking AAB and directory contents after build..."
+    - ls -l Build/Android/
+    - |
+      if [ ! -f "Build/Android/${AAB_NAME}" ]; then
+        echo "Error ... AAB file not found. Build failed."
+        send_build_failure_notification "AAB_FILE_MISSING"
+        exit 1
+      fi
+      echo "AAB build succeeded."
+
+    - echo "Copying AAB and symbols file to storage directory..."
+    - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/AAB/"
+    - mkdir -p "${STORAGE_PATH}"
+    - echo "Clearing old data in ${STORAGE_PATH}..."
+    - chmod -R 775 "${STORAGE_PATH}"
+    - find "${STORAGE_PATH}" -type f -delete || echo "No files to delete or permission issue, proceeding..."
+    - cp "Build/Android/${AAB_NAME}" "${STORAGE_PATH}/"
+    - echo "AAB copied to ${STORAGE_PATH}"
+    - echo "${STORAGE_PATH}/${AAB_NAME}" > aab_path.txt
+    - symbols_file=$(find Build/Android -name "*.symbols.zip" | head -n 1)
+    - |
+      if [ -n "$symbols_file" ]; then
+        cp "$symbols_file" "${STORAGE_PATH}/"
+        echo "Symbols file copied to ${STORAGE_PATH}"
+      else
+        echo "No symbols file found to copy."
+      fi
+
+    - export PATCH_VERSION=0
+    - export NEXT_AAB_VERSION=$((AAB_VERSION + 1))
+    - export NEXT_MINOR_VERSION=$((MINOR_VERSION + 1))
+    - export NEXT_APK_VERSION="${MAJOR_VERSION}.${NEXT_MINOR_VERSION}.${PATCH_VERSION}"
+
+    - echo "Updating AAB_VERSION in GitLab CI/CD Variables..."
+    - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEXT_AAB_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/AAB_VERSION"'
+    - echo "Updating APK_VERSION in GitLab CI/CD Variables..."
+    - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEXT_APK_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
+  
+  after_script:
+      - Assets/cicd/ci/release-resource.sh "global_build_aab"
+  
+  artifacts:
+    paths:
+      - build_output.log
+      - changelog.txt
+      - addressables_build_log.txt
+    when: always  
+    expire_in: 1 day  
+
+build_apk_by_tag:
+  stage: build_apk_by_tag
+  resource_group: "${CI_PROJECT_ID}"
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+  before_script:
+    - export BUILD_TYPE="📱APK"
+    - export VERSION_INFO="${APK_VERSION}"
+    - *common_before_script
+    - *send_notify_dev
+  timeout: 30m
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^develop\/ver_/'
+      when: on_success
+
+  script:
+    # Extracting changelog from tag...
+    - echo "Extracting changelog from tag..."
+    - if [ -z "$CI_COMMIT_TAG" ]; then
+        echo "Error CI_COMMIT_TAG is not set. Exiting...";
+        exit 1;
+      fi
+    - echo "Tag detected $CI_COMMIT_TAG"
+    - export CHANGELOG=$(git tag -l --format="%(contents)" "$CI_COMMIT_TAG")
+    - if [ -z "$CHANGELOG" ]; then
+        echo "No changelog found for tag $CI_COMMIT_TAG. Exiting...";
+      fi
+    - echo "Changelog extracted:"
+    - echo "$CHANGELOG"
+
+    # Add build information to CHANGELOG
+    - export BUILDER_INFO="By $GITLAB_USER_NAME <$GITLAB_USER_EMAIL> on $(date '+%m-%d %H:%M')"
+    - export FULL_CHANGELOG=$(echo -e "$CHANGELOG\n\n$BUILDER_INFO")
+    - echo "Final CHANGELOG:"
+    - echo "$FULL_CHANGELOG"
+
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwzle
+    - *disable_app_binary
+
+    - *setup_screwzle
+
+    - mkdir -p Build/Android;
+    - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
+    - echo "$APK_NAME" > apk_name.txt
+    - echo "APK_NAME ${APK_NAME}";
+    - touch $CI_PROJECT_DIR/build_output.log
+    - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
+    - start=$(date +%s)
+
+    # Unity build with automatic retry on Gradle failures
+    # This handles intermittent PackageAndroidArtifact failures by retrying immediately with existing cache
+    # MAX_RETRY_ATTEMPTS=1 means: 1 initial build + 1 retry = 2 total attempts
+    - |
+      MAX_RETRY_ATTEMPTS=1
+      BUILD_ATTEMPT=0
+      BUILD_SUCCESS=false
+      MAX_TOTAL_ATTEMPTS=$((MAX_RETRY_ATTEMPTS + 1))
+
+      while [ $BUILD_ATTEMPT -lt $MAX_TOTAL_ATTEMPTS ]; do
+        BUILD_ATTEMPT=$((BUILD_ATTEMPT + 1))
+        echo "========================================";
+        echo "Unity build attempt $BUILD_ATTEMPT of $MAX_TOTAL_ATTEMPTS";
+        echo "========================================";
+
+        if $UNITY_PATH -projectPath $CI_PROJECT_DIR -buildTarget Android -executeMethod BuildScript.BuildAPK -buildPath=Build/Android/${APK_NAME} -logFile $CI_PROJECT_DIR/build_output.log -batchmode -nographics -silent-crashes -quit; then
+          echo "✓ Unity build succeeded on attempt $BUILD_ATTEMPT";
+          BUILD_SUCCESS=true
+          break
+        else
+          BUILD_EXIT_CODE=$?
+          echo "✗ Unity build failed on attempt $BUILD_ATTEMPT with exit code $BUILD_EXIT_CODE";
+
+          # Check if this is a Gradle-related failure
+          if grep -q "PackageAndroidArtifact\|GradleBuildFailure\|Gradle build failed" $CI_PROJECT_DIR/build_output.log; then
+            echo "⚠ Detected Gradle build failure in logs";
+
+            if [ $BUILD_ATTEMPT -lt $MAX_TOTAL_ATTEMPTS ]; then
+              echo "⟳ Retrying build immediately (using existing Gradle cache)...";
+              echo "Waiting 5 seconds before retry...";
+              sleep 5;
+              continue
+            else
+              echo "✗ Max retries reached ($MAX_RETRY_ATTEMPTS retry after initial build). Build failed.";
+              # Gradle failure after exhausting all retries
+              send_build_failure_notification "GRADLE_RETRY_EXHAUSTED"
+              exit 1;
+            fi
+          else
+            echo "✗ Non-Gradle failure detected. Not retrying.";
+            # Non-Gradle failure (likely compilation error)
+            send_build_failure_notification "COMPILATION_ERROR"
+            exit 1;
+          fi
+        fi
+      done
+
+      if [ "$BUILD_SUCCESS" = false ]; then
+        echo "✗ Build failed after $MAX_TOTAL_ATTEMPTS total attempts (1 initial + $MAX_RETRY_ATTEMPTS retry)";
+        # This should not be reached, but handle it anyway
+        send_build_failure_notification "BUILD_FAILED_UNKNOWN"
+        exit 1;
+      fi
+
+    - end=$(date +%s)
+    - echo "Time taken... $((end-start)) seconds"
+    - echo "Checking APK and directory contents after build..."
+    - ls -l Build/Android/
+    - if [ ! -f "Build/Android/${APK_NAME}" ]; then
+        echo "Error... APK file not found. Build failed.";
+        send_build_failure_notification "APK_FILE_MISSING"
+        exit 1;
+      else
+        echo "APK build succeeded.";
+      fi
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
+
+    - echo "Copying APK to storage directory..."
+    - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/APK/"
+    - mkdir -p "${STORAGE_PATH}"
+    - echo "Clearing old data in ${STORAGE_PATH}..."
+    - chmod -R 775 "${STORAGE_PATH}"
+    - find "${STORAGE_PATH}" -type f -delete || echo "No files to delete or permission issue, proceeding..."
+    - cp "Build/Android/${APK_NAME}" "${STORAGE_PATH}/"
+    - echo "${STORAGE_PATH}/${APK_NAME}" > apk_path.txt
+    - echo "APK copied to ${STORAGE_PATH}"
+    
+    
+    - echo "Preparing to upload APK..."
+    - if [ -f "Build/Android/${APK_NAME}" ]; then
+        echo "Uploading APK...";
+        python3 Assets/cicd/ci/upload_slack.py "Build/Android/${APK_NAME}" "$FULL_CHANGELOG" "$SLACK_USER_IDS";
+      else
+        echo "Error... No APK found for upload.";
+        send_build_failure_notification "APK_UPLOAD_MISSING"
+        exit 1;
+      fi
+
+    # Update APK_VERSION in GitLab CI/CD Variables 
+    - echo "Updating APK_VERSION in GitLab CI/CD Variables..."
+    
+    # Increase PATCH version for each build on the develop branch
+    - export PATCH_VERSION=$((PATCH_VERSION + 1))
+
+    # Construct the new version in MAJOR.MINOR.PATCH format
+    - export NEW_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
+    - echo "Building with new version $NEW_VERSION"
+
+    - 'curl -X PUT -H "PRIVATE-TOKEN: $GITLAB_API_TOKEN" -d "value=$NEW_VERSION" "https://gitlab.ikameglobal.com/api/v4/projects/$CI_PROJECT_ID/variables/APK_VERSION"'
+  
+  artifacts:
+    paths:
+      - build_output.log
+      - apk_path.txt
+      - addressables_build_log.txt
+    when: always
+    expire_in: 1 day
+
+
+build_self_test:
+  stage: build_self_test
+  resource_group: "${CI_PROJECT_ID}"
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+  before_script:
+    - export BUILD_TYPE="📱APK_SelfTest"
+    - export VERSION_INFO="${APK_VERSION}"
+    - *common_before_script
+  timeout: 30m
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^self_test(_[A-Z0-9]+)?$/'
+      when: on_success
+  script:
+    # Configure APK build without OBB (gộp data vào APK) - MUST be before setup_screwzle
+    - *disable_app_binary
+  
+    - *setup_screwzle
+
+    - mkdir -p Build/Android;
+    - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
+    - echo "$APK_NAME" > apk_name.txt
+    - echo "APK_NAME ${APK_NAME}";
+    - touch $CI_PROJECT_DIR/build_output.log
+    - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
+    - start=$(date +%s)
+    
+    # Check for NOTIFY_DEV variable and determine who to notify
+    - if [ -z "$NOTIFY_DEV" ]; then
+        echo "NOTIFY_DEV is not set or empty. Exiting...";
+        exit 1;
+      fi
+    - |
+      if [ "$CI_COMMIT_TAG" = "self_test" ]; then
+        export MAIN_DEV=$(echo $NOTIFY_DEV | cut -d ',' -f1);  # Default to first user in NOTIFY_DEV
+      else
+        export MAIN_DEV=$(echo $CI_COMMIT_TAG | sed 's/self_test_//');  # Extract USER_ID from self_test_<USER_ID>
+        # Verify if MAIN_DEV exists in NOTIFY_DEV
+        if ! echo ",$NOTIFY_DEV," | grep -q ",$MAIN_DEV,"; then
+          echo "Error: $MAIN_DEV from tag $CI_COMMIT_TAG is not in NOTIFY_DEV ($NOTIFY_DEV). Exiting...";
+          exit 1;
+        fi
+      fi
+
+    - echo "Main developer to notify $MAIN_DEV"
+    - export NOTIFY_DEV=${MAIN_DEV}
+    - *send_notify_dev
+
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+        echo "Error... Unity build failed after retries.";
+        exit 1;
+      }
+    - end=$(date +%s)
+    - echo "Time taken... $((end-start)) seconds"
+    - echo "Checking APK and directory contents after build..."
+    - ls -l Build/Android/
+    - if [ ! -f "Build/Android/${APK_NAME}" ]; then
+        echo "Error... APK file not found. Build failed.";
+        send_build_failure_notification "APK_FILE_MISSING"
+        exit 1;
+      else
+        echo "APK build succeeded.";
+      fi
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
+    # Copy APK to storage directory 
+    - echo "Copying APK to storage directory..."
+    - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/APK/"
+    - mkdir -p "${STORAGE_PATH}"
+    - echo "Clearing old data in ${STORAGE_PATH}..."
+    - chmod -R 775 "${STORAGE_PATH}" || echo "Permission issue, proceeding..."
+    - find "${STORAGE_PATH}" -type f -delete || echo "No files to delete, proceeding..."
+    - cp "Build/Android/${APK_NAME}" "${STORAGE_PATH}/"
+    - echo "${STORAGE_PATH}/${APK_NAME}" > apk_path.txt
+    - echo "✅ APK copied to ${STORAGE_PATH}"
+    - echo "✅ APK path saved to apk_path.txt ${STORAGE_PATH}/${APK_NAME}"
+
+    - echo "Preparing to upload APK..."
+    - if [ -f "Build/Android/${APK_NAME}" ]; then
+        echo "Uploading APK...";
+        python3 Assets/cicd/ci/send_slack_file_dm.py "Build/Android/${APK_NAME}" "Build Self Test:" "$MAIN_DEV";
+      else
+        echo "Error... No APK found for upload.";
+        send_build_failure_notification "APK_UPLOAD_MISSING"
+        exit 1;
+      fi
+
+  artifacts:
+    paths:
+      - build_output.log
+      - apk_path.txt
+      - addressables_build_log.txt
+    when: always
+    expire_in: 1 day
+
+
+check_build_failure:
+  stage: check
+  resource_group: "${CI_PROJECT_ID}"
+  before_script:
+    - export BUILD_TYPE="📱Check_Build_Daily"
+    - export VERSION_INFO="${APK_VERSION}"
+    - *common_before_script
+  timeout: 10m
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: on_success
+  script:
+    # Configure APK build without OBB (gộp data vào APK)
+    - *disable_app_binary
+    
+    - mkdir -p Build/Android;
+    - export APK_NAME="${PROJECT_NAME}_v${CURRENT_VERSION}.apk";
+    - echo "$APK_NAME" > apk_name.txt
+    - echo "APK_NAME ${APK_NAME}";
+    - touch $CI_PROJECT_DIR/build_output.log
+    - echo "Starting Unity build..." > $CI_PROJECT_DIR/build_output.log
+    - start=$(date +%s)
+    # Unity build with automatic retry on Gradle failures
+    - retry_unity_build_with_gradle_detection "BuildScript.BuildAPK" "Build/Android/${APK_NAME}" "APK" || {
+        python3 Assets/cicd/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "?? Daily Build Failed... CI/CD detected a build failure during the daily build check." "$SLACK_BOT_TOKEN" "? Please review the pipeline logs and address the issue. ???? Job Details... $CI_JOB_URL";
+        exit 1;
+      }
+    - end=$(date +%s)
+    - echo "Time taken... $((end-start)) seconds"
+    - echo "Checking APK and directory contents after build..."
+    - ls -l Build/Android/
+    - if [ ! -f "Build/Android/${APK_NAME}" ]; then
+        echo "Error... APK file not found. Build failed.";
+        send_build_failure_notification "APK_FILE_MISSING"
+        python3 Assets/cicd/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "?? Daily Build Failed... CI/CD detected a build failure during the daily build check." "$SLACK_BOT_TOKEN" "? Please review the pipeline logs and address the issue. ???? Job Details... $CI_JOB_URL";
+        exit 1;
+      else
+        echo "APK build succeeded.";
+      fi
+
+    # Verify APK contains x86_64 libraries for emulator testing
+    - echo "Verifying APK architecture support..."
+    - unzip -l "Build/Android/${APK_NAME}" | grep "lib/" | tee apk_libs.txt
+    - |
+      if grep -q "lib/x86_64/" apk_libs.txt; then
+        echo "✓ APK contains x86_64 libraries - emulator testing will work";
+      else
+        echo "⚠ WARNING: APK does NOT contain x86_64 libraries!";
+        echo "⚠ This APK will crash on x86_64 emulator with SIGILL error";
+      fi
+    - |
+      if grep -q "lib/arm64-v8a/" apk_libs.txt; then
+        echo "✓ APK contains ARM64 libraries - production devices supported";
+      else
+        echo "✗ ERROR: APK does NOT contain ARM64 libraries!";
+        exit 1;
+      fi
+
+    - echo "Build Succeeded..."
+
+upload_internal:
+  stage: deploy
+  resource_group: "${CI_PROJECT_ID}"
+  needs:
+    - build_aab
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^release\/bundle.*$/'
+      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  script:
+    - echo "Starting upload_internal job..."
+    - STORAGE_PATH="${BASE_PATH}/build_storage/${PROJECT_NAME}/AAB/"
+    - echo "Searching for AAB file in ${STORAGE_PATH}..."
+    - export AAB_PATH=$(find "${STORAGE_PATH}" -maxdepth 1 -type f -name "*.aab" | head -n 1)
+    - if [ -z "$AAB_PATH" ]; then
+        echo "Error >>>>> No AAB file found in ${STORAGE_PATH}" && exit 1;
+      fi
+    - echo "Found AAB file $AAB_PATH"
+    
+    - AAB_NAME=$(basename "$AAB_PATH")
+    - echo "AAB File Name >> $AAB_NAME"
+
+    - echo "Searching for symbols file in ${STORAGE_PATH}..."
+    - export SYMBOLS_PATH=$(find "${STORAGE_PATH}" -maxdepth 1 -type f -name "*.symbols.zip" | head -n 1)
+    - if [ -n "$SYMBOLS_PATH" ]; then
+        echo "Found symbols file $SYMBOLS_PATH";
+      else
+        echo "No symbols file found.";
+      fi
+
+    - if [ -z "$GOOGLE_PLAY_PACKAGE_NAME" ]; then
+        echo "GOOGLE_PLAY_PACKAGE_NAME is not set. Extracting from ProjectSettings/ProjectSettings.asset...";
+        export GOOGLE_PLAY_PACKAGE_NAME=$(grep "Android:" ProjectSettings/ProjectSettings.asset | head -n 1 | awk '{print $2}');
+        echo "Extracted GOOGLE_PLAY_PACKAGE_NAME $GOOGLE_PLAY_PACKAGE_NAME";
+      fi
+
+    - if [ -z "$GOOGLE_PLAY_JSON_KEY_BASE64" ]; then
+        echo "Error >>>>> GOOGLE_PLAY_JSON_KEY_BASE64 is not set" && exit 1;
+      else
+        echo "Decoding GOOGLE_PLAY_JSON_KEY_BASE64 to file...";
+        echo "$GOOGLE_PLAY_JSON_KEY_BASE64" | base64 --decode > google_play_key.json;
+        export GOOGLE_PLAY_JSON_KEY_PATH=$(pwd)/google_play_key.json;
+        echo "Created GOOGLE_PLAY_JSON_KEY_PATH $GOOGLE_PLAY_JSON_KEY_PATH";
+      fi
+
+    - echo "GOOGLE_PLAY_PACKAGE_NAME $GOOGLE_PLAY_PACKAGE_NAME"
+    - echo "GOOGLE_PLAY_JSON_KEY_PATH $GOOGLE_PLAY_JSON_KEY_PATH"
+    - echo "AAB_PATH $AAB_PATH"
+    - echo "SYMBOLS_PATH $SYMBOLS_PATH"
+    
+    - echo "Preparing fastlane configuration..."
+    - mkdir -p fastlane
+    - cp Assets/cicd/ci/deploy/Fastfile_android fastlane/Fastfile
+    - export FASTLANE_SKIP_INTERACTIVE=1
+    - export FASTLANE_DEBUG=1
+    - echo "Starting fastlane upload_internal in verbose mode..."
+
+    # Run fastlane and capture exit code
+    - |
+      set +e  # Disable exit on error temporarily
+      fastlane upload_internal --verbose 2>&1 | tee fastlane_upload.log
+      FASTLANE_EXIT_CODE=$?
+      set -e  # Re-enable exit on error
+
+      if [ $FASTLANE_EXIT_CODE -ne 0 ]; then
+        echo "❌ Fastlane upload_internal failed with exit code $FASTLANE_EXIT_CODE"
+        echo "📤 Uploading AAB and symbols files to Slack as fallback..."
+
+        # Prepare failure message
+        FAILURE_MESSAGE="🚨 *Fastlane Upload Failed*\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}Project: *${PROJECT_NAME}*\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}Platform: *Android*\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}Build: *${AAB_NAME}*\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}Exit Code: ${FASTLANE_EXIT_CODE}\n\n"
+        FAILURE_MESSAGE="${FAILURE_MESSAGE}📦 Files are being uploaded to this channel for manual deployment."
+
+        # Upload AAB file to Slack
+        if [ -f "$AAB_PATH" ]; then
+          echo "Uploading AAB file to Slack..."
+          python3 Assets/cicd/ci/upload_slack.py "$AAB_PATH" "$FAILURE_MESSAGE" "$SLACK_USER_IDS" || echo "Failed to upload AAB file"
+        else
+          echo "⚠️ AAB file not found at $AAB_PATH"
+        fi
+
+        # Upload symbols file to Slack if exists
+        if [ -n "$SYMBOLS_PATH" ] && [ -f "$SYMBOLS_PATH" ]; then
+          echo "Uploading symbols file to Slack..."
+          SYMBOLS_MESSAGE="📊 *Symbols file for ${AAB_NAME}*"
+          python3 Assets/cicd/ci/upload_slack.py "$SYMBOLS_PATH" "$SYMBOLS_MESSAGE" "$SLACK_USER_IDS" || echo "Failed to upload symbols file"
+        else
+          echo "⚠️ No symbols file found to upload"
+        fi
+
+        # Send notification to developers
+        if [ -n "$NOTIFY_DEV" ]; then
+          echo "Sending failure notification to developers..."
+          python3 Assets/cicd/ci/send_slack_direct_message.py uploaded_to_internal_fail project_name="$PROJECT_NAME" platform="Android" build_name="$AAB_NAME" notify_user="$NOTIFY_DEV" || echo "Failed to send DM notification"
+        fi
+
+        echo "❌ Exiting with failure status"
+        exit $FASTLANE_EXIT_CODE
+      else
+        echo "✅ Upload internal completed successfully. Please check fastlane_upload.log for warnings."
+      fi
+    
+    - if [ -f supply_result.json ]; then
+        warning_messages=$(jq -r '.release_status.warningMessages[]' supply_result.json 2>/dev/null || echo "No warnings found in JSON");
+        if [ -n "$warning_messages" ]; then
+          echo "Cảnh báo từ Google Play:";
+          echo "$warning_messages";
+        else
+          echo "Không tìm thấy cảnh báo trong supply_result.json.";
+        fi
+      fi
+      
+    # Retrieve change log
+    - if [ -f "changelog.txt" ]; then
+        export CHANGELOG=$(cat changelog.txt);
+      else
+        export CHANGELOG="No changelog available";
+      fi
+    # Send slack message
+    - echo "Loading Slack message template..."
+    - export MESSAGE_TEMPLATES_FILE="Assets/cicd/ci/message_templates.json"
+
+    - export NOTIFY_USERS=$(echo "$SLACK_USER_IDS" | awk -F',' '{for (i=1; i<=NF; i++) printf "<@%s> ", $i}')
+
+    - |
+      template_key="uploaded_to_internal" 
+      message=$(jq -r --arg key "$template_key" '.[$key]' "$MESSAGE_TEMPLATES_FILE")
+
+      if [ -z "$message" ] || [ "$message" == "null" ]; then
+        echo "[ERROR] Message template not found for key: $template_key";
+        exit 1
+      fi
+
+      CLEAN_CHANGELOG=$(echo "$CHANGELOG" | sed 's/|//g; s/[[:cntrl:]]//g')
+
+      formatted_message=$(printf "$message\n\n%s" "$NOTIFY_USERS" | sed \
+        -e "s@{project_name}@${PROJECT_NAME}@g" \
+        -e "s@{platform}@Android@g" \
+        -e "s@{build_name}@${AAB_NAME}@g" \
+        -e "s@\\*{change_log}\\*@@g")  # Xóa *{change_log}* tạm thời
+
+      formatted_message=$(printf "%s\n\n*Change Log:*\n%s" "$formatted_message" "$CLEAN_CHANGELOG")
+
+      echo "Formatted Slack message:"
+      echo "$formatted_message"
+
+    - python3 Assets/cicd/ci/send_slack_message.py "$SLACK_CHANNEL_ID" "$formatted_message" "$SLACK_BOT_TOKEN"
+
+
+  after_script:
+    - echo "Running after_script. Job status $CI_JOB_STATUS"
+    - if [ "$CI_JOB_STATUS" == "failed" ]; then
+        echo "Job failed! Executing failure script...";
+        export FAILURE_MESSAGE="🚨 Job '${CI_JOB_NAME}' in pipeline '${CI_PIPELINE_URL}' failed! Check the logs.";        
+        python3 Assets/cicd/ci/send_slack_direct_message.py uploaded_to_internal_fail project_name="$PROJECT_NAME" platform="Android" build_name="$AAB_NAME" notify_user="$NOTIFY_DEV";
+        echo "Failure script executed.";
+      fi
+      
+  artifacts:
+    paths:
+      - fastlane_upload.log
+      - supply_result.json
+    when: always
+    expire_in: 1 day  
+
+clear_library_cache:
+  stage: check
+  resource_group: project_unique_group
+  script:
+    - echo "🧹 Starting Library Cache Clear Operation"
+    - echo "📅 Timestamp $(date '+%Y-%m-%d %H:%M:%S')"
+    - echo "👤 Triggered by ${TRIGGERED_BY:-$GITLAB_USER_NAME} (${GITLAB_USER_EMAIL:-Unknown})"
+    - echo "🔧 Trigger source ${TRIGGER_SOURCE:-$CI_PIPELINE_SOURCE}"
+    - echo "📋 Operation type ${OPERATION_TYPE:-CLEAR_CACHE}"
+    - echo ""
+    - echo "🔍 Checking Library directory..."
+    - |
+      if [ -d "./Library" ]; then
+        echo "📂 Library directory found"
+        echo "📊 Current size: $(du -sh ./Library 2>/dev/null || echo 'Unable to calculate')"
+        echo ""
+        echo "🗑️ Clearing Library directory contents..."
+        if rm -rf ./Library/*; then
+          echo "✅ Successfully cleared Library directory"
+          echo "📊 New size: $(du -sh ./Library 2>/dev/null || echo '0')"
+        else
+          echo "❌ Failed to clear Library directory"
+          echo "⚠️ Please check permissions and try again"
+          exit 1
+        fi
+        echo "📋 Contents of ./Library after clearing (should be empty):"
+        ls -la ./Library || echo "Directory is completely empty"
+      else
+        echo "⚠️ Library directory not found"
+        echo "ℹ️ This may be the first build or Library is not cached"
+      fi
+    - echo ""
+    - echo "✅ Clear Library Cache operation completed successfully"
+    - echo "📅 Completed at $(date '+%Y-%m-%d %H:%M:%S')"
+  rules:
+    # Auto-run when triggered from Unity Editor via API with OPERATION_TYPE variable
+    - if: '$CI_PIPELINE_SOURCE == "api" && $OPERATION_TYPE == "CLEAR_CACHE"'
+      when: on_success
+    # Manual trigger from GitLab Web UI (for safety)
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+    # Fallback: manual for any other API triggers without OPERATION_TYPE
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+      when: manual
+  allow_failure: true
